@@ -43,6 +43,10 @@ export const uploadStudent = async (
           const student_code: string = row["ลำดับ"];
           const password: string = row["รหัสผ่าน"] || "1234";
           const affiliation: string = row["สังกัด"] || "";
+          
+          // ดึงอีเมลและเบอร์โทรศัพท์จาก CSV (รองรับชื่อคอลัมน์หลายแบบ)
+          const email: string = row["อีเมล"] || row["Email"] || row["email"] || "";
+          const phone: string = row["เบอร์โทรศัพท์"] || row["เบอร์โทร"] || row["Phone"] || row["phone"] || "";
 
           // แกะ ยศ ชื่อ สกุล
           const fullName: string = row["ยศ - ชื่อ - สกุล"] || "";
@@ -65,8 +69,8 @@ export const uploadStudent = async (
 
           const query = `
                         INSERT INTO students 
-                        (batch_id, student_code, password, rank_name, first_name, last_name, affiliation) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (batch_id, student_code, password, rank_name, first_name, last_name, affiliation, email, phone) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     `;
 
           await connection.execute(query, [
@@ -77,6 +81,8 @@ export const uploadStudent = async (
             first_name,
             last_name,
             affiliation,
+            email,
+            phone
           ]);
         }
 
@@ -144,6 +150,8 @@ export const addStudent = async (
     student_code,
     password,
     affiliation,
+    email,
+    phone,
   } = req.body;
 
   // ตรวจสอบว่ามีการส่งข้อมูลที่จำเป็นมาครบหรือไม่
@@ -169,8 +177,8 @@ export const addStudent = async (
 
     const query = `
       INSERT INTO students 
-      (batch_id, student_code, password, rank_name, first_name, last_name, affiliation) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (batch_id, student_code, password, rank_name, first_name, last_name, affiliation, email, phone) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     // หากไม่ได้กรอกรหัสผ่าน ให้ตั้งค่าเริ่มต้นเป็น "1234" ตามที่เคยทำในอัปโหลด CSV
@@ -184,6 +192,8 @@ export const addStudent = async (
       first_name,
       last_name || "",
       affiliation || "",
+      email || "",
+      phone || "",
     ]);
 
     await connection.commit();
@@ -220,6 +230,8 @@ export const updateStudent = async (
     student_code,
     password,
     affiliation,
+    email,
+    phone,
   } = req.body;
 
   if (!id) {
@@ -240,7 +252,9 @@ export const updateStudent = async (
         last_name = ?, 
         student_code = ?, 
         password = ?, 
-        affiliation = ?
+        affiliation = ?,
+        email = ?,
+        phone = ?
       WHERE id = ?
     `;
 
@@ -251,6 +265,8 @@ export const updateStudent = async (
       student_code,
       password,
       affiliation || "",
+      email || "",
+      phone || "",
       id,
     ]);
 
