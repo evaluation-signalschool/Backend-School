@@ -538,7 +538,7 @@ export const getFormSubmissions = async (
     }
 
     // 2. ดึงข้อมูลผู้ส่ง (Submissions)
-    const sqlSubmissions = `
+    let sqlSubmissions = `
       SELECT 
         s.id AS submission_id,
         s.created_at AS submitted_at,
@@ -550,9 +550,18 @@ export const getFormSubmissions = async (
       FROM evaluation_submissions s
       LEFT JOIN students st ON s.student_id COLLATE utf8mb4_unicode_ci = st.student_code COLLATE utf8mb4_unicode_ci
       WHERE s.form_id = ?
-      ORDER BY s.created_at DESC
     `;
-    const [submissionsRaw]: any = await conn.query(sqlSubmissions, [formId]);
+    const paramsSubmissions: any[] = [formId];
+
+    const { subjectId } = req.query;
+    if (subjectId) {
+      sqlSubmissions += ` AND s.subject_id = ?`;
+      paramsSubmissions.push(subjectId);
+    }
+
+    sqlSubmissions += ` ORDER BY s.created_at DESC`;
+
+    const [submissionsRaw]: any = await conn.query(sqlSubmissions, paramsSubmissions);
 
     // 3. ดึงคำตอบทั้งหมดของฟอร์มนี้
     const sqlAnswers = `
