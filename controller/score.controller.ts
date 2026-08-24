@@ -526,6 +526,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         groupsMap[row.group_id] = {
           groupId: row.group_id,
           groupName: row.group_name || "",
+          groupCode: row.group_name || "", // เก็บชื่อดั้งเดิม (เช่น M01, MN01) ไว้ตรวจสอบสี
           credit: Number(row.credit) || 0,
           subjects: [],
           group_max_score: 0,
