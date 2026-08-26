@@ -548,7 +548,7 @@ export const getFormSubmissions = async (
         st.first_name,
         st.last_name
       FROM evaluation_submissions s
-      LEFT JOIN students st ON s.student_id COLLATE utf8mb4_unicode_ci = st.student_code COLLATE utf8mb4_unicode_ci
+      LEFT JOIN students st ON s.student_id = st.id
       WHERE s.form_id = ?
     `;
     const paramsSubmissions: any[] = [formId];
