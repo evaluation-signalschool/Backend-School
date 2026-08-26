@@ -1,4 +1,5 @@
 import express from "express";
+import path from "path";
 import cors from "cors"; // 1. Import cors เข้ามา
 import courseRoutes from "./routes/course.route";
 import authRoutes from "./routes/auth.route"; // Import routes สำหรับ auth]
@@ -15,6 +16,9 @@ app.use(cors());
 
 // Middleware สำหรับอ่าน JSON
 app.use(express.json());
+
+// Serve static files from uploads folder
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Routes
 app.use("/api", courseRoutes);
