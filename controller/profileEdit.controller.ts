@@ -1,6 +1,21 @@
 import { Request, Response } from "express";
 import { conn } from "../dbconn";
 import fs from "fs";
+import cloudinary from "../config/cloudinary";
+import streamifier from "streamifier";
+
+const uploadToCloudinary = (buffer: Buffer): Promise<any> => {
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { folder: "profile_edits", resource_type: "auto" },
+            (error, result) => {
+                if (result) resolve(result);
+                else reject(error);
+            }
+        );
+        streamifier.createReadStream(buffer).pipe(uploadStream);
+    });
+};
 
 // 1. POST - Student submits profile edit request
 export const submitEditRequest = async (req: Request, res: Response): Promise<Response | void> => {
@@ -22,9 +37,6 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
         );
         
         if (existing.length > 0 && (existing[0].status === 'pending' || existing[0].status === 'approved')) {
-            if (file?.path && fs.existsSync(file.path)) {
-                fs.unlinkSync(file.path);
-            }
             return res.status(400).json({ 
                 message: "You have already submitted a request or your previous request was approved." 
             });
@@ -50,6 +62,15 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
         `;
         
+        let documentData = null;
+        if (file) {
+            const uploadResult = await uploadToCloudinary(file.buffer);
+            documentData = JSON.stringify({
+                url: uploadResult.secure_url,
+                public_id: uploadResult.public_id
+            });
+        }
+        
         await connection.execute(query, [
             student_id, 
             student.rank_name || '', 
@@ -58,15 +79,12 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
             new_rank || student.rank_name || '',
             new_first_name || student.first_name || '',
             new_last_name || student.last_name || '',
-            file ? file.filename : null
+            documentData
         ]);
         
         res.status(201).json({ message: "Profile edit request submitted successfully." });
     } catch (error) {
         console.error("Error submitting profile edit request:", error);
-        if (file?.path && fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-        }
         res.status(500).json({ message: "Internal server error" });
     } finally {
         if (connection) connection.release();
@@ -168,6 +186,21 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
                 `UPDATE students SET rank_name = ?, first_name = ?, last_name = ? WHERE id = ?`,
                 [request.new_rank, request.new_first_name, request.new_last_name, request.student_id]
             );
+        }
+        
+        // Delete document from Cloudinary if exists to free up space
+        if (request.document_path) {
+            try {
+                const docData = JSON.parse(request.document_path);
+                if (docData && docData.public_id) {
+                    // For raw files (like pdf sometimes), resource_type might be different, but Cloudinary usually handles it.
+                    // We can specify resource_type if needed, or let it guess.
+                    await cloudinary.uploader.destroy(docData.public_id, { resource_type: "raw" }).catch(() => {});
+                    await cloudinary.uploader.destroy(docData.public_id, { resource_type: "image" }).catch(() => {});
+                }
+            } catch (e) {
+                console.error("Error deleting from Cloudinary (might be old format):", e);
+            }
         }
         
         await connection.commit();
