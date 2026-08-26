@@ -128,9 +128,11 @@ export const getAllRequests = async (req: Request, res: Response): Promise<Respo
     try {
         connection = await conn.getConnection();
         const [rows]: any = await connection.execute(`
-            SELECT r.*, s.student_code, s.batch_id 
+            SELECT r.*, s.student_code, s.batch_id, cb.batch_name, c.course_name 
             FROM profile_edit_requests r
             JOIN students s ON r.student_id = s.id
+            LEFT JOIN course_batches cb ON s.batch_id = cb.id
+            LEFT JOIN courses c ON cb.course_id = c.id
             ORDER BY r.created_at DESC
         `);
         return res.status(200).json(rows);
@@ -208,6 +210,28 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
     } catch (error) {
         if (connection) await connection.rollback();
         console.error("Error updating request status:", error);
+        return res.status(500).json({ message: "Internal server error" });
+    } finally {
+        if (connection) connection.release();
+    }
+};
+
+// 5. DELETE - Admin deletes a request permanently
+export const deleteRequest = async (req: Request, res: Response): Promise<Response> => {
+    const { id } = req.params;
+    
+    let connection;
+    try {
+        connection = await conn.getConnection();
+        
+        await connection.execute(
+            `DELETE FROM profile_edit_requests WHERE id = ?`,
+            [id]
+        );
+        
+        return res.status(200).json({ message: "Request deleted successfully." });
+    } catch (error) {
+        console.error("Error deleting request:", error);
         return res.status(500).json({ message: "Internal server error" });
     } finally {
         if (connection) connection.release();

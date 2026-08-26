@@ -5,7 +5,8 @@ import {
     submitEditRequest,
     checkEditStatus,
     getAllRequests,
-    updateRequestStatus
+    updateRequestStatus,
+    deleteRequest
 } from "../controller/profileEdit.controller";
 
 const router = express.Router();
@@ -18,5 +19,6 @@ router.post("/edit-profile", upload.single("document"), submitEditRequest);
 router.get("/edit-profile/status/:studentId", checkEditStatus);
 router.get("/edit-profile/requests", getAllRequests);
 router.put("/edit-profile/requests/:id", updateRequestStatus);
+router.delete("/edit-profile/requests/:id", deleteRequest);
 
 export default router;
