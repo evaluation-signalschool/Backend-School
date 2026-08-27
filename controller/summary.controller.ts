@@ -42,15 +42,24 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     // Helper: format full name
     const formatName = (s: any) => `${s.rank_name || ''} ${s.first_name || ''} ${s.last_name || ''}`.trim();
 
+    // 2.5 Get all subjects for this batch
+    const [subjectsQuery]: any = await conn.query(
+      `SELECT s.id as subject_id, s.subject_name 
+       FROM subjects s
+       INNER JOIN subject_groups sg ON s.group_id = sg.id
+       WHERE sg.batch_id = ?`,
+      [batchId]
+    );
+
     // ==========================================
-    // A. Overview (Evaluated vs Pending per Form)
+    // A. Overview (Evaluated vs Pending per Subject)
     // ==========================================
-    const overview = forms.map((form: any) => {
-      // Find all submissions for this form
-      const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
+    const overview = subjectsQuery.map((subject: any) => {
+      // Find all submissions for this subject (for instructor evaluations)
+      const subjectSubs = submissions.filter((s: any) => s.subject_id === subject.subject_id);
       
-      // Get unique student IDs who submitted this form
-      const evaluatedStudentIds = new Set(formSubs.map((s: any) => s.student_id));
+      // Get unique student IDs who submitted for this subject
+      const evaluatedStudentIds = new Set(subjectSubs.map((s: any) => s.student_id));
       
       // Calculate pending users
       const pendingUsers = students
@@ -62,9 +71,9 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
         }));
 
       return {
-        formId: form.form_id,
-        courseName: form.subject_name || form.form_name,
-        evaluationType: form.evaluation_type,
+        formId: subject.subject_id, 
+        courseName: subject.subject_name,
+        evaluationType: 'instructor',
         evaluatedCount: evaluatedStudentIds.size,
         pendingCount: pendingUsers.length,
         pendingUsers: pendingUsers
