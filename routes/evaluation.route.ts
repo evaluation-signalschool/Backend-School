@@ -10,8 +10,12 @@ import {
   deleteEvaluation,
   getFormSubmissions,
 } from "../controller/evaluation.controller";
+import { getEvaluationSummary } from "../controller/summary.controller";
 
 const router = Router();
+
+// GET: /api/evaluations/summary/:batchId - ดึงข้อมูลสรุปผลการประเมิน
+router.get("/summary/:batchId", getEvaluationSummary);
 
 // สร้าง Endpoint GET /evaluation-forms
 router.get("/evaluation-forms", getAllEvaluations);
