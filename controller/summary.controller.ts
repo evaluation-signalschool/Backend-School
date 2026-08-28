@@ -53,7 +53,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
 
     // 2.6 Get all questions to map order_num
     const [questions]: any = await conn.query(
-      `SELECT id, order_num FROM evaluation_questions WHERE question_type = 'choice'`
+      `SELECT id, order_num FROM evaluation_questions`
     );
     const questionOrderMap: any = {};
     questions.forEach((q: any) => {
