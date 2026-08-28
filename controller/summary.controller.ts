@@ -306,6 +306,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       success: true,
       data: {
         totalStudents: students.length,
+        totalSubjects: subjectsQuery.length,
         overview,
         teacherResults,
         studentResults,
