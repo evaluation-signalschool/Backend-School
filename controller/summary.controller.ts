@@ -51,6 +51,15 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       [batchId]
     );
 
+    // 2.6 Get all questions to map order_num
+    const [questions]: any = await conn.query(
+      `SELECT id, order_num FROM evaluation_questions WHERE question_type = 'choice'`
+    );
+    const questionOrderMap: any = {};
+    questions.forEach((q: any) => {
+      questionOrderMap[q.id] = q.order_num;
+    });
+
     // ==========================================
     // A. Overview (Evaluated vs Pending per Subject)
     // ==========================================
@@ -87,26 +96,57 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     const teacherMap: any = {};
     const teacherForms = forms.filter((f: any) => f.evaluation_type === 'instructor');
     
+    // 1. นำรายวิชาทั้งหมดมาใส่ไว้ใน map ก่อน เพื่อให้วิชาที่ยังไม่มีคนประเมินแสดงผลด้วย
+    subjectsQuery.forEach((subject: any) => {
+      const key = `${subject.subject_name}_NoInstructor`;
+      teacherMap[key] = {
+        courseName: subject.subject_name,
+        instructorName: '-',
+        curriculumId: batchId,
+        courseId: subject.subject_id,
+        scores: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0, q6: 0, q7: 0 },
+        counts: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0, q6: 0, q7: 0 },
+        totalScore: 0,
+        scoreCount: 0,
+        isPlaceholder: true
+      };
+    });
+    
+    // 2. อัปเดตข้อมูลจากคำตอบที่มีจริง
     teacherForms.forEach((form: any) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
-        const key = `${form.subject_name || form.form_name}_${sub.instructor_name || 'ไม่ระบุ'}`;
+        const courseName = form.subject_name || form.form_name;
+        
+        // ลบ placeholder ทิ้งถ้ามีการประเมินจริงแล้ว
+        const placeholderKey = `${courseName}_NoInstructor`;
+        if (teacherMap[placeholderKey] && teacherMap[placeholderKey].isPlaceholder) {
+          delete teacherMap[placeholderKey];
+        }
+
+        const key = `${courseName}_${sub.instructor_name || 'ไม่ระบุ'}`;
         if (!teacherMap[key]) {
           teacherMap[key] = {
-            courseName: form.subject_name || form.form_name,
+            courseName: courseName,
             instructorName: sub.instructor_name || 'ไม่ระบุ',
-            curriculumId: batchId, // just placeholder
+            curriculumId: batchId,
             courseId: form.subject_id || '0',
-            scores: [],
+            scores: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0, q6: 0, q7: 0 },
+            counts: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0, q6: 0, q7: 0 },
             totalScore: 0,
-            scoreCount: 0
+            scoreCount: 0,
+            isPlaceholder: false
           };
         }
         
         // Get answers for this submission
         const subAnswers = answers.filter((a: any) => a.submission_id === sub.submission_id);
         subAnswers.forEach((a: any) => {
-          teacherMap[key].scores.push(Number(a.score_value));
+          const order = questionOrderMap[a.question_id];
+          if (order && order <= 7) {
+            teacherMap[key].scores[`q${order}`] += Number(a.score_value);
+            teacherMap[key].counts[`q${order}`] += 1;
+          }
           teacherMap[key].totalScore += Number(a.score_value);
           teacherMap[key].scoreCount += 1;
         });
@@ -121,10 +161,19 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       else if (avg >= 2.51) level = "ปานกลาง";
       else if (avg >= 1.51) level = "พอใช้";
 
+      const finalScores: any = {};
+      for (let i = 1; i <= 7; i++) {
+        const qKey = `q${i}`;
+        finalScores[qKey] = t.counts[qKey] > 0 
+          ? Number((t.scores[qKey] / t.counts[qKey]).toFixed(2)) 
+          : (t.isPlaceholder ? '-' : 0);
+      }
+
       return {
         ...t,
+        scores: finalScores,
         averageScore: Number(avg.toFixed(2)),
-        level
+        level: t.isPlaceholder ? '-' : level
       };
     });
 

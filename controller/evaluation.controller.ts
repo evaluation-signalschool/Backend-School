@@ -546,9 +546,13 @@ export const getFormSubmissions = async (
         st.student_code,
         st.rank_name,
         st.first_name,
-        st.last_name
+        st.last_name,
+        subj.subject_name,
+        f.form_name
       FROM evaluation_submissions s
       LEFT JOIN students st ON s.student_id = st.id
+      LEFT JOIN subjects subj ON s.subject_id = subj.id
+      LEFT JOIN evaluation_forms f ON s.form_id = f.id
       WHERE s.form_id = ?
     `;
     const paramsSubmissions: any[] = [formId];
@@ -593,6 +597,7 @@ export const getFormSubmissions = async (
         name: `${sub.rank_name || ''} ${sub.first_name || ''} ${sub.last_name || ''}`.trim(),
         studentCode: sub.student_code,
         instructorName: sub.instructor_name,
+        courseName: sub.subject_name || sub.form_name || '-',
         answers: answerDict
       };
     });
