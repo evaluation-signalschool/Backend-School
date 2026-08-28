@@ -92,16 +92,16 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     // ==========================================
     // B. Teacher Results (evaluation_type = 'instructor' / target_group='instructor')
     // ==========================================
-    // We group answers by instructor_name + subject
+    // We group answers by subject
     const teacherMap: any = {};
     const teacherForms = forms.filter((f: any) => f.evaluation_type === 'instructor');
     
     // 1. นำรายวิชาทั้งหมดมาใส่ไว้ใน map ก่อน เพื่อให้วิชาที่ยังไม่มีคนประเมินแสดงผลด้วย
     subjectsQuery.forEach((subject: any) => {
-      const key = `${subject.subject_name}_NoInstructor`;
+      const key = subject.subject_name;
       teacherMap[key] = {
         courseName: subject.subject_name,
-        instructorName: '-',
+        instructors: new Set<string>(),
         curriculumId: batchId,
         courseId: subject.subject_id,
         scores: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0, q6: 0, q7: 0 },
@@ -117,18 +117,12 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
         const courseName = form.subject_name || form.form_name;
-        
-        // ลบ placeholder ทิ้งถ้ามีการประเมินจริงแล้ว
-        const placeholderKey = `${courseName}_NoInstructor`;
-        if (teacherMap[placeholderKey] && teacherMap[placeholderKey].isPlaceholder) {
-          delete teacherMap[placeholderKey];
-        }
+        const key = courseName;
 
-        const key = `${courseName}_${sub.instructor_name || 'ไม่ระบุ'}`;
         if (!teacherMap[key]) {
           teacherMap[key] = {
             courseName: courseName,
-            instructorName: sub.instructor_name || 'ไม่ระบุ',
+            instructors: new Set<string>(),
             curriculumId: batchId,
             courseId: form.subject_id || '0',
             scores: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0, q6: 0, q7: 0 },
@@ -137,7 +131,12 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
             scoreCount: 0,
             isPlaceholder: false
           };
+        } else if (teacherMap[key].isPlaceholder) {
+          teacherMap[key].isPlaceholder = false;
         }
+        
+        const instrName = sub.instructor_name || 'ไม่ระบุ';
+        teacherMap[key].instructors.add(instrName);
         
         // Get answers for this submission
         const subAnswers = answers.filter((a: any) => a.submission_id === sub.submission_id);
@@ -169,8 +168,12 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
           : (t.isPlaceholder ? '-' : 0);
       }
 
+      const instructorsArray = Array.from(t.instructors as Set<string>);
+      const joinedInstructors = instructorsArray.length > 0 ? instructorsArray.join(' / ') : '-';
+
       return {
         ...t,
+        instructorName: joinedInstructors,
         scores: finalScores,
         averageScore: Number(avg.toFixed(2)),
         level: t.isPlaceholder ? '-' : level
