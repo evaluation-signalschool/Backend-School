@@ -198,9 +198,6 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     studentForms.forEach((form: any) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
-        // Here, the instructor evaluated the student. sub.student_id is the target.
-        const student = students.find((st: any) => String(st.id) === String(sub.student_id));
-        const sName = student ? formatName(student) : 'ไม่ทราบชื่อ';
         let courseName = form.subject_name || form.form_name;
         if (sub.subject_id) {
           const actualSubject = subjectsQuery.find((sq: any) => sq.subject_id === sub.subject_id);
@@ -209,14 +206,14 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
           }
         }
         
-        const key = `${courseName}_${sub.student_id}`;
+        // จัดกลุ่มตามวิชา (ไม่แยกรายนักเรียน)
+        const key = courseName;
         if (!studentMap[key]) {
           studentMap[key] = {
             courseName: courseName,
-            studentId: student ? student.student_code : 'N/A',
-            studentName: sName,
-            instructorName: sub.instructor_name || 'ไม่ระบุ',
-            scores: [],
+            scores: [],       // เก็บคะแนนทุกข้อทุก submission
+            qSums: [0, 0, 0, 0, 0],
+            qCounts: [0, 0, 0, 0, 0],
             totalScore: 0,
             scoreCount: 0
           };
@@ -224,8 +221,15 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
         
         const subAnswers = answers.filter((a: any) => a.submission_id === sub.submission_id);
         subAnswers.forEach((a: any) => {
-          studentMap[key].scores.push(Number(a.score_value));
-          studentMap[key].totalScore += Number(a.score_value);
+          const val = Number(a.score_value);
+          // ใช้ questionOrderMap เพื่อ map question_id → ตำแหน่งที่ถูกต้อง (1-5)
+          const order = questionOrderMap[a.question_id];
+          if (order && order >= 1 && order <= 5) {
+            const qIdx = order - 1;
+            studentMap[key].qSums[qIdx] += val;
+            studentMap[key].qCounts[qIdx]++;
+          }
+          studentMap[key].totalScore += val;
           studentMap[key].scoreCount += 1;
         });
       });
@@ -234,14 +238,21 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     const studentResults = Object.values(studentMap).map((s: any) => {
       const avg = s.scoreCount > 0 ? (s.totalScore / s.scoreCount) : 0;
       let level = "ปรับปรุง";
-      if (avg >= 4.51) level = "ดีมาก";
-      else if (avg >= 3.51) level = "ดี";
+      if (avg >= 4.51) level = "มากที่สุด";
+      else if (avg >= 3.51) level = "มาก";
       else if (avg >= 2.51) level = "ปานกลาง";
       else if (avg >= 1.51) level = "พอใช้";
 
+      const score1 = s.qCounts[0] > 0 ? Number((s.qSums[0] / s.qCounts[0]).toFixed(2)) : 0;
+      const score2 = s.qCounts[1] > 0 ? Number((s.qSums[1] / s.qCounts[1]).toFixed(2)) : 0;
+      const score3 = s.qCounts[2] > 0 ? Number((s.qSums[2] / s.qCounts[2]).toFixed(2)) : 0;
+      const score4 = s.qCounts[3] > 0 ? Number((s.qSums[3] / s.qCounts[3]).toFixed(2)) : 0;
+      const score5 = s.qCounts[4] > 0 ? Number((s.qSums[4] / s.qCounts[4]).toFixed(2)) : 0;
+
       return {
-        ...s,
-        averageScore: Number(avg.toFixed(2)),
+        courseName: s.courseName,
+        score1, score2, score3, score4, score5,
+        avgScore: Number(avg.toFixed(2)),
         level
       };
     });
