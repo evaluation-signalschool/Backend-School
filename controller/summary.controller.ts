@@ -116,7 +116,16 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     teacherForms.forEach((form: any) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
-        const courseName = form.subject_name || form.form_name;
+        let courseName = form.subject_name || form.form_name;
+        
+        // ถ้า submission มี subject_id ระบุไว้ ให้ดึงชื่อวิชาจาก subjectsQuery แทน (อิงตามข้อมูลจริงตอนประเมิน)
+        if (sub.subject_id) {
+          const actualSubject = subjectsQuery.find((sq: any) => sq.subject_id === sub.subject_id);
+          if (actualSubject) {
+            courseName = actualSubject.subject_name;
+          }
+        }
+        
         const key = courseName;
 
         if (!teacherMap[key]) {
@@ -192,11 +201,18 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
         // Here, the instructor evaluated the student. sub.student_id is the target.
         const student = students.find((st: any) => String(st.id) === String(sub.student_id));
         const sName = student ? formatName(student) : 'ไม่ทราบชื่อ';
+        let courseName = form.subject_name || form.form_name;
+        if (sub.subject_id) {
+          const actualSubject = subjectsQuery.find((sq: any) => sq.subject_id === sub.subject_id);
+          if (actualSubject) {
+            courseName = actualSubject.subject_name;
+          }
+        }
         
-        const key = `${form.subject_name || form.form_name}_${sub.student_id}`;
+        const key = `${courseName}_${sub.student_id}`;
         if (!studentMap[key]) {
           studentMap[key] = {
-            courseName: form.subject_name || form.form_name,
+            courseName: courseName,
             studentId: student ? student.student_code : 'N/A',
             studentName: sName,
             instructorName: sub.instructor_name || 'ไม่ระบุ',
