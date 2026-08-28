@@ -59,11 +59,11 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       const subjectSubs = submissions.filter((s: any) => s.subject_id === subject.subject_id);
       
       // Get unique student IDs who submitted for this subject
-      const evaluatedStudentIds = new Set(subjectSubs.map((s: any) => s.student_id));
+      const evaluatedStudentIds = new Set(subjectSubs.map((s: any) => String(s.student_id)));
       
       // Calculate pending users
       const pendingUsers = students
-        .filter((student: any) => !evaluatedStudentIds.has(student.id))
+        .filter((student: any) => !evaluatedStudentIds.has(String(student.id)))
         .map((student: any) => ({
           id: student.id,
           name: formatName(student),
@@ -138,7 +138,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
         // Here, the instructor evaluated the student. sub.student_id is the target.
-        const student = students.find((st: any) => st.id === sub.student_id);
+        const student = students.find((st: any) => String(st.id) === String(sub.student_id));
         const sName = student ? formatName(student) : 'ไม่ทราบชื่อ';
         
         const key = `${form.subject_name || form.form_name}_${sub.student_id}`;
