@@ -3,6 +3,10 @@ import { conn } from "../dbconn";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ตรวจสอบว่ามีโฟลเดอร์ uploads/news หรือไม่ ถ้าไม่มีให้สร้าง
 const uploadDir = path.join(__dirname, "..", "uploads", "news");
