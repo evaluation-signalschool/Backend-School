@@ -16,3 +16,32 @@ export const conn = mysql.createPool({
     rejectUnauthorized: false, // เพิ่มส่วนนี้ทั้งหมด - Aiven บังคับใช้ SSL
   },
 });
+
+export const checkConnection = async () => {
+  try {
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS admin (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        password VARCHAR(255) NOT NULL
+      )
+    `);
+
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS news (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        news_date DATE,
+        file_url VARCHAR(255),
+        file_name VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    console.log("Required tables checked/created.");
+  } catch (error) {
+    console.error("Error creating tables:", error);
+  }
+};

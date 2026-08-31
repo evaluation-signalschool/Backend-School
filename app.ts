@@ -7,6 +7,7 @@ import dropdownRoutes from "./routes/dropdown.route"; // Import routes สำห
 import studentRoute from "./routes/student.route";
 import evaluationRouter from "./routes/evaluation.route";
 import profileEditRoutes from "./routes/profileEdit.route";
+import newsRoutes from "./routes/news.route";
 const app = express();
 
 // 2. เรียกใช้ middleware cors ก่อนที่จะเรียก routes
@@ -27,4 +28,5 @@ app.use("/api", dropdownRoutes); // เพิ่ม route สำหรับ dro
 app.use("/api", studentRoute);
 app.use("/api", evaluationRouter);
 app.use("/api", profileEditRoutes);
+app.use("/api", newsRoutes);
 export default app;
