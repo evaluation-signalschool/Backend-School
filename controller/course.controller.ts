@@ -78,9 +78,30 @@ export const getGroupedCourses = async (
     });
   }
 };
-export const addCourse = async (req: Request, res: Response) => {
+export const addCourse = async (req: Request, res: Response): Promise<void> => {
   const { course_name, curriculum_year } = req.body;
   try {
+    // 1. จัดการ String ที่รับมาโดยลบช่องว่างและวงเล็บออกทั้งหมด
+    const normalizedNewName = course_name.replace(/[\s()]/g, '');
+
+    // 2. ค้นหาในฐานข้อมูลโดยใช้ REPLACE ลบช่องว่างและวงเล็บของข้อมูลเดิมมาเทียบ
+    const checkSql = `
+      SELECT course_name 
+      FROM courses 
+      WHERE REPLACE(REPLACE(REPLACE(course_name, ' ', ''), '(', ''), ')', '') = ?
+    `;
+    const [existingCourses]: any = await conn.query(checkSql, [normalizedNewName]);
+
+    // 3. ถ้าเจอว่าซ้ำ ให้ส่ง Error กลับไป
+    if (existingCourses.length > 0) {
+      res.status(400).json({ 
+        success: false, 
+        message: `มีหลักสูตรนี้อยู่แล้ว (${existingCourses[0].course_name})` 
+      });
+      return;
+    }
+
+    // 4. ถ้าไม่ซ้ำก็บันทึกตามปกติ
     const [result] = await conn.query(
       "INSERT INTO courses (course_name, curriculum_year) VALUES (?, ?)",
       [course_name, curriculum_year],
