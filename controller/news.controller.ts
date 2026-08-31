@@ -78,3 +78,49 @@ export const deleteNews = async (req: Request, res: Response): Promise<void> => 
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาด" });
   }
 };
+
+// API สำหรับแก้ไขข่าวสาร
+export const updateNews = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { title, description, type, news_date } = req.body;
+    let fileUrl: string | undefined = undefined;
+    let fileName: string | undefined = undefined;
+
+    // ถ้ามีการอัปโหลดไฟล์ใหม่ ให้ดึงไฟล์เก่าออกมาลบ แล้วอัปเดตไฟล์ใหม่
+    if (req.file) {
+      fileUrl = `/uploads/news/${req.file.filename}`;
+      fileName = req.file.originalname;
+
+      // ลบไฟล์เก่า
+      const [rows]: any = await conn.query("SELECT file_url FROM news WHERE id = ?", [id]);
+      if (rows.length > 0 && rows[0].file_url) {
+        const filePath = path.join(process.cwd(), rows[0].file_url);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
+    }
+
+    let query = "UPDATE news SET title = ?, description = ?, type = ?, news_date = ?";
+    const values: any[] = [title, description, type, news_date || null];
+
+    if (fileUrl && fileName) {
+      query += ", file_url = ?, file_name = ?";
+      values.push(fileUrl, fileName);
+    }
+    
+    query += " WHERE id = ?";
+    values.push(id);
+
+    const [result]: any = await conn.query(query, values);
+
+    if (result.affectedRows === 0) {
+      res.status(404).json({ success: false, message: "ไม่พบข่าวที่ต้องการแก้ไข" });
+      return;
+    }
+
+    res.status(200).json({ success: true, message: "แก้ไขข่าวสารสำเร็จ" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการแก้ไขข่าวสาร" });
+  }
+};
