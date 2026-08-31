@@ -3,13 +3,8 @@ import { conn } from "../dbconn";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // ตรวจสอบว่ามีโฟลเดอร์ uploads/news หรือไม่ ถ้าไม่มีให้สร้าง
-const uploadDir = path.join(__dirname, "..", "uploads", "news");
+const uploadDir = path.join(process.cwd(), "uploads", "news");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -68,7 +63,7 @@ export const deleteNews = async (req: Request, res: Response): Promise<void> => 
     // ดึง file_url ของข่าวก่อนลบ เพื่อลบไฟล์ออกด้วย
     const [rows]: any = await conn.query("SELECT file_url FROM news WHERE id = ?", [id]);
     if (rows.length > 0 && rows[0].file_url) {
-      const filePath = path.join(__dirname, "..", rows[0].file_url);
+      const filePath = path.join(process.cwd(), rows[0].file_url);
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
 
