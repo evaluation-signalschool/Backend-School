@@ -3,25 +3,33 @@ import { conn } from "../dbconn";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-// ตรวจสอบว่ามีโฟลเดอร์ uploads/news หรือไม่ ถ้าไม่มีให้สร้าง
-const uploadDir = path.join(process.cwd(), "uploads", "news");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+import cloudinary from "../config/cloudinary";
+import streamifier from "streamifier";
 
-// multer config
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, unique + path.extname(file.originalname));
-  },
-});
-
+// multer config: ใช้ memoryStorage แทน diskStorage เพื่อเก็บไฟล์ไว้ใน RAM ชั่วคราวก่อนส่งไป Cloudinary
+const storage = multer.memoryStorage();
 export const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
 });
+
+// Helper function สำหรับอัปโหลดขึ้น Cloudinary
+const uploadToCloudinary = (buffer: Buffer, originalName: string): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "news",
+        resource_type: "auto", // รองรับทุกไฟล์รวมถึง PDF
+        public_id: path.parse(originalName).name.replace(/[^a-zA-Z0-9]/g, "_") + "-" + Date.now()
+      },
+      (error, result) => {
+        if (result) resolve(result);
+        else reject(error);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+};
 
 // ─── GET: ดึงข่าวสารทั้งหมด ───────────────────────────────
 export const getNews = async (_req: Request, res: Response): Promise<void> => {
@@ -41,8 +49,14 @@ export const addNews = async (req: Request, res: Response): Promise<void> => {
   try {
     const { title, description, type, news_date } = req.body;
     const file = req.file;
-    const file_url = file ? `/uploads/news/${file.filename}` : null;
-    const file_name = file ? file.originalname : null;
+    let file_url = null;
+    let file_name = null;
+
+    if (file) {
+      const result = await uploadToCloudinary(file.buffer, file.originalname);
+      file_url = result.secure_url;
+      file_name = file.originalname;
+    }
 
     await conn.query(
       `INSERT INTO news (title, description, type, news_date, file_url, file_name)
@@ -51,7 +65,7 @@ export const addNews = async (req: Request, res: Response): Promise<void> => {
     );
     res.status(201).json({ success: true, message: "เพิ่มข่าวสารสำเร็จ" });
   } catch (error) {
-    console.error(error);
+    console.error("Upload error:", error);
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึก" });
   }
 };
@@ -60,11 +74,14 @@ export const addNews = async (req: Request, res: Response): Promise<void> => {
 export const deleteNews = async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
   try {
-    // ดึง file_url ของข่าวก่อนลบ เพื่อลบไฟล์ออกด้วย
+    // ลบไฟล์เก่า (กรณีที่ไฟล์เก่าเป็น Local file จะลบออกจากเครื่อง)
     const [rows]: any = await conn.query("SELECT file_url FROM news WHERE id = ?", [id]);
     if (rows.length > 0 && rows[0].file_url) {
-      const filePath = path.join(process.cwd(), rows[0].file_url);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      const url = rows[0].file_url;
+      if (url.startsWith('/uploads/')) {
+        const filePath = path.join(process.cwd(), url);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
     }
 
     const [result]: any = await conn.query("DELETE FROM news WHERE id = ?", [id]);
@@ -87,16 +104,20 @@ export const updateNews = async (req: Request, res: Response): Promise<void> => 
     let fileUrl: string | undefined = undefined;
     let fileName: string | undefined = undefined;
 
-    // ถ้ามีการอัปโหลดไฟล์ใหม่ ให้ดึงไฟล์เก่าออกมาลบ แล้วอัปเดตไฟล์ใหม่
     if (req.file) {
-      fileUrl = `/uploads/news/${req.file.filename}`;
+      // อัปโหลดไฟล์ใหม่ขึ้น Cloudinary
+      const result = await uploadToCloudinary(req.file.buffer, req.file.originalname);
+      fileUrl = result.secure_url;
       fileName = req.file.originalname;
 
-      // ลบไฟล์เก่า
+      // จัดการลบไฟล์เก่า (ถ้าเป็น Local file)
       const [rows]: any = await conn.query("SELECT file_url FROM news WHERE id = ?", [id]);
       if (rows.length > 0 && rows[0].file_url) {
-        const filePath = path.join(process.cwd(), rows[0].file_url);
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        const oldUrl = rows[0].file_url;
+        if (oldUrl.startsWith('/uploads/')) {
+          const filePath = path.join(process.cwd(), oldUrl);
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        }
       }
     }
 
