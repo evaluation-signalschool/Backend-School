@@ -5,7 +5,7 @@ dotenv.config(); // โหลดค่าจากไฟล์ .env
 
 export const conn = mysql.createPool({
   host: process.env.DB_HOST as string,
-  port: Number(process.env.DB_PORT), // เพิ่มบรรทัดนี้
+  port: Number(process.env.DB_PORT),
   user: process.env.DB_USER as string,
   password: process.env.DB_PASSWORD as string,
   database: process.env.DB_NAME as string,
@@ -13,7 +13,7 @@ export const conn = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   ssl: {
-    rejectUnauthorized: false, // เพิ่มส่วนนี้ทั้งหมด - Aiven บังคับใช้ SSL
+    rejectUnauthorized: false,
   },
 });
 
@@ -39,6 +39,14 @@ export const checkConnection = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    try {
+      await conn.query(`ALTER TABLE evaluation_forms ADD COLUMN form_description TEXT NULL`);
+    } catch (_) {}
+
+    try {
+      await conn.query(`ALTER TABLE evaluation_questions ADD COLUMN subject_for INT NULL`);
+    } catch (_) {}
 
     console.log("Required tables checked/created.");
   } catch (error) {

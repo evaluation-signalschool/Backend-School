@@ -70,7 +70,7 @@ export const createEvaluation = async (
   res: Response,
 ): Promise<Response | void> => {
   // 1. รับข้อมูลโครงสร้างใหม่จาก Frontend (ตัด googleFormUrl ทิ้งไป รับ questions เข้ามาแทน)
-  const { formType, formName, generationId, subjectId, questions, targetGroup } = req.body;
+  const { formType, formName, formDescription, generationId, subjectId, questions, targetGroup } = req.body;
 
   // เช็คว่ามีคำถามส่งมาด้วยไหม
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
@@ -88,14 +88,15 @@ export const createEvaluation = async (
     // 2. บันทึก "หัวฟอร์ม" ลงตาราง evaluation_forms (เอา form_url ออก)
     const sqlForm = `
       INSERT INTO evaluation_forms 
-      (batch_id, subject_id, evaluation_type, form_name, is_active, created_at, updated_at, target_group) 
-      VALUES (?, ?, ?, ?, 1, NOW(), NOW(), ?)
+      (batch_id, subject_id, evaluation_type, form_name, form_description, is_active, created_at, updated_at, target_group) 
+      VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW(), ?)
     `;
     const [formResult]: any = await connection.query(sqlForm, [
       generationId || null,
       subjectId || null,
       formType,
       formName,
+      formDescription || null,
       targetGroup || 'student',
     ]);
 
@@ -103,17 +104,20 @@ export const createEvaluation = async (
 
     // 3. วนลูปบันทึก "คำถาม" และ "ตัวเลือก"
     for (const [index, q] of questions.entries()) {
-      // 3.1 บันทึกคำถามลงตาราง evaluation_questions
+      // 3.1 บันทึกคำถามลงตาราง evaluation_questions (รวม subject_for)
       const sqlQuestion = `
         INSERT INTO evaluation_questions 
-        (form_id, question_text, question_type, order_num) 
-        VALUES (?, ?, ?, ?)
+        (form_id, question_text, question_type, order_num, subject_for) 
+        VALUES (?, ?, ?, ?, ?)
       `;
+      const cleanSubjectFor = q.subject_for && q.subject_for !== 'undefined' && q.subject_for !== 'all' ? q.subject_for : null;
+
       const [questionResult]: any = await connection.query(sqlQuestion, [
         formId,
         q.question_text,
         q.question_type || "choice",
         index + 1, // ให้ลำดับข้อเรียงตาม Array ที่ส่งมา
+        cleanSubjectFor,
       ]);
 
       const questionId = questionResult.insertId; // ได้ ID ของคำถามมาผูกกับตัวเลือก
@@ -200,6 +204,7 @@ export const getEvaluationById = async (
       data: {
         form_id: form.id,
         form_name: form.form_name,
+        form_description: form.form_description || '',
         evaluation_type: form.evaluation_type,
         batch_id: form.batch_id,
         subject_id: form.subject_id,
@@ -221,7 +226,7 @@ export const updateEvaluation = async (
   res: Response,
 ): Promise<Response | void> => {
   const { id } = req.params;
-  const { formType, googleFormUrl, formName, generationId, subjectId, questions } = req.body;
+  const { formType, googleFormUrl, formName, formDescription, generationId, subjectId, questions } = req.body;
 
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
     return res
@@ -236,7 +241,7 @@ export const updateEvaluation = async (
     // 1. อัปเดตหัวฟอร์ม
     const sql = `
       UPDATE evaluation_forms 
-      SET batch_id = ?, subject_id = ?, evaluation_type = ?, form_url = ?, form_name = ?, updated_at = NOW() 
+      SET batch_id = ?, subject_id = ?, evaluation_type = ?, form_url = ?, form_name = ?, form_description = ?, updated_at = NOW() 
       WHERE id = ?
     `;
 
@@ -246,6 +251,7 @@ export const updateEvaluation = async (
       formType,
       googleFormUrl,
       formName,
+      formDescription || null,
       id,
     ]);
 
@@ -287,12 +293,13 @@ export const updateEvaluation = async (
     // 3. วนลูป อัปเดต หรือ เพิ่ม คำถาม
     for (const [index, q] of questions.entries()) {
       let questionId = q.id;
+      const cleanSubjectFor = q.subject_for && q.subject_for !== 'undefined' && q.subject_for !== 'all' ? q.subject_for : null;
 
       if (questionId) {
         // อัปเดตคำถามเดิม
         await connection.query(
-          `UPDATE evaluation_questions SET question_text = ?, question_type = ?, order_num = ? WHERE id = ? AND form_id = ?`,
-          [q.question_text, q.question_type || "choice", index + 1, questionId, id]
+          `UPDATE evaluation_questions SET question_text = ?, question_type = ?, order_num = ?, subject_for = ? WHERE id = ? AND form_id = ?`,
+          [q.question_text, q.question_type || "choice", index + 1, cleanSubjectFor, questionId, id]
         );
         
         // ลบตัวเลือกเก่าทิ้งทั้งหมดของคำถามนี้ (ปลอดภัยเพราะไม่มี FK โยงมาหา)
@@ -301,19 +308,20 @@ export const updateEvaluation = async (
         // สร้างคำถามใหม่
         const sqlQuestion = `
           INSERT INTO evaluation_questions 
-          (form_id, question_text, question_type, order_num) 
-          VALUES (?, ?, ?, ?)
+          (form_id, question_text, question_type, order_num, subject_for) 
+          VALUES (?, ?, ?, ?, ?)
         `;
         const [questionResult]: any = await connection.query(sqlQuestion, [
           id,
           q.question_text,
           q.question_type || "choice",
           index + 1,
+          cleanSubjectFor,
         ]);
         questionId = questionResult.insertId;
       }
 
-      // 4. เพิ่มตัวเลือก (ทั้งใหม่และเก่าที่ถูกลบไปแล้วสร้างใหม่)
+      // 4. เพิ่มตัวเลือก (เฉพาะ choice)
       if (q.question_type === "choice" && q.choices && Array.isArray(q.choices)) {
         const choiceValues = q.choices.map((c: any, cIndex: number) => [
           questionId,
@@ -431,6 +439,7 @@ export const getEvaluationQuestions = async (
       data: {
         form_id: form.id,
         form_name: form.form_name,
+        form_description: form.form_description || '',
         evaluation_type: form.evaluation_type,
         questions: questions,
       },
