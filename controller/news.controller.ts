@@ -3,32 +3,37 @@ import { conn } from "../dbconn";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import cloudinary from "../config/cloudinary";
-import streamifier from "streamifier";
+import { supabase } from "../config/supabase";
 
-// multer config: ใช้ memoryStorage แทน diskStorage เพื่อเก็บไฟล์ไว้ใน RAM ชั่วคราวก่อนส่งไป Cloudinary
+// multer config: ใช้ memoryStorage เพื่อเก็บไฟล์ใน RAM ชั่วคราวก่อนส่งไป Supabase
 const storage = multer.memoryStorage();
 export const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
 });
 
-// Helper function สำหรับอัปโหลดขึ้น Cloudinary
-const uploadToCloudinary = (buffer: Buffer, originalName: string): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: "news",
-        resource_type: "raw", // ใช้ raw เพื่อรองรับไฟล์แนบทุกประเภท (PDF, Word, Excel) และแก้ปัญหาบักโหลด PDF ไม่ขึ้น
-        public_id: path.parse(originalName).name.replace(/[^a-zA-Z0-9]/g, "_") + "-" + Date.now() + path.extname(originalName) // raw ต้องมีนามสกุลไฟล์ด้วย
-      },
-      (error, result) => {
-        if (result) resolve(result);
-        else reject(error);
-      }
-    );
-    streamifier.createReadStream(buffer).pipe(stream);
-  });
+// Helper function สำหรับอัปโหลดขึ้น Supabase Storage
+const uploadToSupabase = async (buffer: Buffer, originalName: string, mimetype: string): Promise<string> => {
+  // สร้างชื่อไฟล์ไม่ซ้ำกัน
+  const fileName = `news/${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.]/g, "_")}`;
+  
+  const { data, error } = await supabase.storage
+    .from('news') // ชื่อ bucket ใน Supabase
+    .upload(fileName, buffer, {
+      contentType: mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  // ดึง URL สำหรับเปิดดูไฟล์ (Public URL)
+  const { data: publicUrlData } = supabase.storage
+    .from('news')
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
 };
 
 // ─── GET: ดึงข่าวสารทั้งหมด ───────────────────────────────
@@ -53,8 +58,7 @@ export const addNews = async (req: Request, res: Response): Promise<void> => {
     let file_name = null;
 
     if (file) {
-      const result = await uploadToCloudinary(file.buffer, file.originalname);
-      file_url = result.secure_url;
+      file_url = await uploadToSupabase(file.buffer, file.originalname, file.mimetype);
       file_name = file.originalname;
     }
 
@@ -105,9 +109,8 @@ export const updateNews = async (req: Request, res: Response): Promise<void> => 
     let fileName: string | undefined = undefined;
 
     if (req.file) {
-      // อัปโหลดไฟล์ใหม่ขึ้น Cloudinary
-      const result = await uploadToCloudinary(req.file.buffer, req.file.originalname);
-      fileUrl = result.secure_url;
+      // อัปโหลดไฟล์ใหม่ขึ้น Supabase
+      fileUrl = await uploadToSupabase(req.file.buffer, req.file.originalname, req.file.mimetype);
       fileName = req.file.originalname;
 
       // จัดการลบไฟล์เก่า (ถ้าเป็น Local file)
