@@ -457,17 +457,16 @@ export const submitEvaluationAnswer = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
-  // 1. รับ student_id ที่ส่งมาจาก Frontend (จากการอ่านค่า studentData ใน LocalStorage)
+  // 1. รับ student_id ที่ส่งมาจาก Frontend (ถ้าไม่มี เช่น ครู/ผู้ใช้ทั่วไป ให้เป็น null ได้)
   const { studentId, formId, subjectId, instructorName, answers } = req.body;
 
   // ตรวจสอบข้อมูลเบื้องต้น
-  if (!studentId || !formId || !answers || !Array.isArray(answers)) {
+  if (!formId || !answers || !Array.isArray(answers)) {
     return res
       .status(400)
       .json({
         success: false,
-        message:
-          "ข้อมูลที่ส่งมาไม่ครบถ้วน (ต้องการ studentId, formId, answers)",
+        message: "ข้อมูลที่ส่งมาไม่ครบถ้วน (ต้องการ formId, answers)",
       });
   }
 
@@ -475,15 +474,27 @@ export const submitEvaluationAnswer = async (
   try {
     await connection.beginTransaction();
 
-    // 2. บันทึกใบเสร็จ (evaluation_submissions) โดยใช้ studentId ของจริง
+    // ตรวจสอบว่า subjectId มีอยู่จริงในฐานข้อมูลหรือไม่ เพื่อไม่ให้ติด Foreign Key
+    let cleanSubjectId: number | null = null;
+    if (subjectId && !isNaN(Number(subjectId)) && Number(subjectId) > 0) {
+      const [subCheck]: any = await connection.query(
+        `SELECT id FROM subjects WHERE id = ?`,
+        [Number(subjectId)]
+      );
+      if (subCheck.length > 0) {
+        cleanSubjectId = Number(subjectId);
+      }
+    }
+
+    // 2. บันทึกใบเสร็จ (evaluation_submissions)
     const sqlSubmission = `
       INSERT INTO evaluation_submissions (student_id, form_id, subject_id, instructor_name, created_at)
       VALUES (?, ?, ?, ?, NOW())
     `;
     const [subResult]: any = await connection.query(sqlSubmission, [
-      studentId, // ใช้รหัสนักเรียนจริง
+      studentId || null,
       formId,
-      subjectId || null,
+      cleanSubjectId,
       instructorName || "ไม่ระบุ",
     ]);
 
