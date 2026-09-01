@@ -13,7 +13,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
 
     // 2. Get all forms for this batch
     const [forms]: any = await conn.query(
-      `SELECT f.id as form_id, f.subject_id, f.evaluation_type, f.form_name, s.subject_name
+      `SELECT f.id as form_id, f.subject_id, f.evaluation_type, f.target_group, f.form_name, s.subject_name
        FROM evaluation_forms f
        LEFT JOIN subjects s ON f.subject_id = s.id
        WHERE f.batch_id = ? AND f.is_active = 1`,
@@ -29,15 +29,17 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       [batchId]
     );
 
-    // 4. Get all answers (only those with scores)
-    const [answers]: any = await conn.query(
-      `SELECT a.submission_id, a.question_id, a.score_value 
+    // 4. Get all answers (including dropdown & text)
+    const [allAnswers]: any = await conn.query(
+      `SELECT a.submission_id, a.question_id, a.score_value, a.comment, q.question_text, q.question_type, q.order_num
        FROM evaluation_answers a
        INNER JOIN evaluation_submissions sub ON a.submission_id = sub.id
        INNER JOIN evaluation_forms f ON sub.form_id = f.id
-       WHERE f.batch_id = ? AND a.score_value IS NOT NULL`,
+       LEFT JOIN evaluation_questions q ON a.question_id = q.id
+       WHERE f.batch_id = ?`,
       [batchId]
     );
+    const answers = allAnswers.filter((a: any) => a.score_value !== null && a.score_value !== undefined);
 
     // Helper: format full name
     const formatName = (s: any) => `${s.rank_name || ''} ${s.first_name || ''} ${s.last_name || ''}`.trim();
@@ -53,7 +55,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
 
     // 2.6 Get all questions to map order_num
     const [questions]: any = await conn.query(
-      `SELECT id, order_num FROM evaluation_questions`
+      `SELECT id, question_text, question_type, order_num FROM evaluation_questions`
     );
     const questionOrderMap: any = {};
     questions.forEach((q: any) => {
@@ -190,70 +192,146 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     });
 
     // ==========================================
-    // C. Student Results (evaluation_type = 'student')
+    // C. Student Results (evaluation_type = 'teacher_course' or 'student')
     // ==========================================
     const studentMap: any = {};
-    const studentForms = forms.filter((f: any) => f.evaluation_type === 'student');
     
+    // 1. นำรายวิชาทั้งหมดมาใส่ไว้ใน map ก่อน เพื่อให้ทุกวิชาในรุ่นนี้แสดงผลเหมือนในตาราง
+    subjectsQuery.forEach((subject: any) => {
+      const key = subject.subject_name;
+      studentMap[key] = {
+        courseName: subject.subject_name,
+        curriculumId: batchId,
+        courseId: subject.subject_id,
+        scores: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0 },
+        counts: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0 },
+        totalScore: 0,
+        scoreCount: 0,
+        isPlaceholder: true
+      };
+    });
+
+    const studentForms = forms.filter(
+      (f: any) =>
+        f.evaluation_type === "teacher_course" ||
+        f.evaluation_type === "student" ||
+        f.target_group === "teacher"
+    );
+
     studentForms.forEach((form: any) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
-        let courseName = form.subject_name || form.form_name;
-        if (sub.subject_id) {
+        let courseName = "";
+
+        const subAnswersAll = allAnswers.filter((a: any) => a.submission_id === sub.submission_id);
+        const dropdownAns = subAnswersAll.find(
+          (a: any) =>
+            a.question_type === "dropdown" ||
+            (a.question_text && a.question_text.includes("วิชา"))
+        );
+        if (dropdownAns && dropdownAns.comment) {
+          courseName = dropdownAns.comment.trim();
+        }
+
+        if (!courseName && sub.subject_id) {
           const actualSubject = subjectsQuery.find((sq: any) => sq.subject_id === sub.subject_id);
           if (actualSubject) {
             courseName = actualSubject.subject_name;
           }
         }
-        
-        // จัดกลุ่มตามวิชา (ไม่แยกรายนักเรียน)
-        const key = courseName;
-        if (!studentMap[key]) {
-          studentMap[key] = {
-            courseName: courseName,
-            scores: [],       // เก็บคะแนนทุกข้อทุก submission
-            qSums: [0, 0, 0, 0, 0],
-            qCounts: [0, 0, 0, 0, 0],
-            totalScore: 0,
-            scoreCount: 0
-          };
+
+        if (!courseName) {
+          courseName = form.subject_name || form.form_name;
         }
-        
-        const subAnswers = answers.filter((a: any) => a.submission_id === sub.submission_id);
-        subAnswers.forEach((a: any) => {
+
+        if (!courseName) return;
+
+        let matchedKey = Object.keys(studentMap).find(
+          (k) => k.trim().toLowerCase() === courseName.trim().toLowerCase()
+        );
+
+        if (!matchedKey) {
+          matchedKey = courseName;
+          studentMap[matchedKey] = {
+            courseName: courseName,
+            curriculumId: batchId,
+            courseId: form.subject_id || "0",
+            scores: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0 },
+            counts: { q1: 0, q2: 0, q3: 0, q4: 0, q5: 0 },
+            totalScore: 0,
+            scoreCount: 0,
+            isPlaceholder: false,
+          };
+        } else {
+          studentMap[matchedKey].isPlaceholder = false;
+        }
+
+        const scoredAnswers = subAnswersAll.filter(
+          (a: any) => a.score_value !== null && a.score_value !== undefined
+        );
+        scoredAnswers.sort((a: any, b: any) => (a.order_num || 0) - (b.order_num || 0));
+
+        scoredAnswers.forEach((a: any, index: number) => {
           const val = Number(a.score_value);
-          // ใช้ questionOrderMap เพื่อ map question_id → ตำแหน่งที่ถูกต้อง (1-5)
-          const order = questionOrderMap[a.question_id];
-          if (order && order >= 1 && order <= 5) {
-            const qIdx = order - 1;
-            studentMap[key].qSums[qIdx] += val;
-            studentMap[key].qCounts[qIdx]++;
+          if (isNaN(val) || val <= 0) return;
+
+          let qIdx = index + 1;
+          const qText = a.question_text || "";
+          if (qText.includes("ความตั้งใจ") || qText.includes("ร่วมมือ")) qIdx = 1;
+          else if (qText.includes("ความพร้อม") || qText.includes("กระตือรือร้น")) qIdx = 2;
+          else if (qText.includes("กฎระเบียบ") || qText.includes("วินัย")) qIdx = 3;
+          else if (qText.includes("ซื่อสัตย์") || qText.includes("ตรงต่อเวลา")) qIdx = 4;
+          else if (qText.includes("คุณลักษณะ")) qIdx = 5;
+
+          if (qIdx >= 1 && qIdx <= 5) {
+            studentMap[matchedKey].scores[`q${qIdx}`] += val;
+            studentMap[matchedKey].counts[`q${qIdx}`] += 1;
           }
-          studentMap[key].totalScore += val;
-          studentMap[key].scoreCount += 1;
+
+          studentMap[matchedKey].totalScore += val;
+          studentMap[matchedKey].scoreCount += 1;
         });
       });
     });
 
     const studentResults = Object.values(studentMap).map((s: any) => {
-      const avg = s.scoreCount > 0 ? (s.totalScore / s.scoreCount) : 0;
-      let level = "ปรับปรุง";
-      if (avg >= 4.51) level = "มากที่สุด";
-      else if (avg >= 3.51) level = "มาก";
-      else if (avg >= 2.51) level = "ปานกลาง";
-      else if (avg >= 1.51) level = "พอใช้";
+      if (s.isPlaceholder || s.scoreCount === 0) {
+        return {
+          courseName: s.courseName,
+          curriculumId: batchId,
+          score1: "-",
+          score2: "-",
+          score3: "-",
+          score4: "-",
+          score5: "-",
+          avgScore: "-",
+          level: "-",
+        };
+      }
 
-      const score1 = s.qCounts[0] > 0 ? Number((s.qSums[0] / s.qCounts[0]).toFixed(2)) : 0;
-      const score2 = s.qCounts[1] > 0 ? Number((s.qSums[1] / s.qCounts[1]).toFixed(2)) : 0;
-      const score3 = s.qCounts[2] > 0 ? Number((s.qSums[2] / s.qCounts[2]).toFixed(2)) : 0;
-      const score4 = s.qCounts[3] > 0 ? Number((s.qSums[3] / s.qCounts[3]).toFixed(2)) : 0;
-      const score5 = s.qCounts[4] > 0 ? Number((s.qSums[4] / s.qCounts[4]).toFixed(2)) : 0;
+      const avg = s.totalScore / s.scoreCount;
+      let level = "ปรับปรุง";
+      if (avg >= 4.50) level = "มากที่สุด";
+      else if (avg >= 3.50) level = "มาก";
+      else if (avg >= 2.50) level = "ปานกลาง";
+      else if (avg >= 1.50) level = "พอใช้";
+
+      const score1 = s.counts.q1 > 0 ? Number((s.scores.q1 / s.counts.q1).toFixed(2)) : "-";
+      const score2 = s.counts.q2 > 0 ? Number((s.scores.q2 / s.counts.q2).toFixed(2)) : "-";
+      const score3 = s.counts.q3 > 0 ? Number((s.scores.q3 / s.counts.q3).toFixed(2)) : "-";
+      const score4 = s.counts.q4 > 0 ? Number((s.scores.q4 / s.counts.q4).toFixed(2)) : "-";
+      const score5 = s.counts.q5 > 0 ? Number((s.scores.q5 / s.counts.q5).toFixed(2)) : "-";
 
       return {
         courseName: s.courseName,
-        score1, score2, score3, score4, score5,
+        curriculumId: batchId,
+        score1,
+        score2,
+        score3,
+        score4,
+        score5,
         avgScore: Number(avg.toFixed(2)),
-        level
+        level,
       };
     });
 
