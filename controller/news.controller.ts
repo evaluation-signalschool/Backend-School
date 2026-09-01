@@ -14,8 +14,8 @@ export const upload = multer({
 
 // Helper function สำหรับอัปโหลดขึ้น Supabase Storage
 const uploadToSupabase = async (buffer: Buffer, originalName: string, mimetype: string): Promise<string> => {
-  // สร้างชื่อไฟล์ไม่ซ้ำกัน
-  const fileName = `news/${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.]/g, "_")}`;
+  // สร้างชื่อไฟล์ไม่ซ้ำกัน (ลบ news/ ออกเพื่อให้ไปอยู่หน้าแรกของ bucket เลย จะได้ไม่บั๊ก)
+  const fileName = `${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.]/g, "_")}`;
   
   const { data, error } = await supabase.storage
     .from('news') // ชื่อ bucket ใน Supabase
