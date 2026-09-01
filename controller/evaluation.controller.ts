@@ -122,16 +122,16 @@ export const createEvaluation = async (
 
       const questionId = questionResult.insertId; // ได้ ID ของคำถามมาผูกกับตัวเลือก
 
-      // 3.2 ถ้าคำถามนี้เป็นแบบมีตัวเลือก (choice) ให้วนลูปบันทึกตัวเลือกลง evaluation_choices
+      // 3.2 ถ้าคำถามนี้เป็นแบบมีตัวเลือก (choice หรือ dropdown พิมพ์เอง) ให้วนลูปบันทึกตัวเลือกลง evaluation_choices
       if (
-        q.question_type === "choice" &&
+        (q.question_type === "choice" || q.question_type === "dropdown") &&
         q.choices &&
         Array.isArray(q.choices)
       ) {
         const choiceValues = q.choices.map((c: any, cIndex: number) => [
           questionId,
           c.choice_text,
-          c.score_value,
+          c.score_value || 0,
           cIndex + 1,
         ]);
 
@@ -321,12 +321,12 @@ export const updateEvaluation = async (
         questionId = questionResult.insertId;
       }
 
-      // 4. เพิ่มตัวเลือก (เฉพาะ choice)
-      if (q.question_type === "choice" && q.choices && Array.isArray(q.choices)) {
+      // 4. เพิ่มตัวเลือก (เฉพาะ choice หรือ dropdown พิมพ์เอง)
+      if ((q.question_type === "choice" || q.question_type === "dropdown") && q.choices && Array.isArray(q.choices)) {
         const choiceValues = q.choices.map((c: any, cIndex: number) => [
           questionId,
           c.choice_text,
-          c.score_value,
+          c.score_value || 0,
           cIndex + 1,
         ]);
 
