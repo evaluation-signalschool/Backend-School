@@ -19,8 +19,8 @@ const uploadToCloudinary = (buffer: Buffer, originalName: string): Promise<any> 
     const stream = cloudinary.uploader.upload_stream(
       {
         folder: "news",
-        resource_type: "auto", // รองรับทุกไฟล์รวมถึง PDF
-        public_id: path.parse(originalName).name.replace(/[^a-zA-Z0-9]/g, "_") + "-" + Date.now()
+        resource_type: "raw", // ใช้ raw เพื่อรองรับไฟล์แนบทุกประเภท (PDF, Word, Excel) และแก้ปัญหาบักโหลด PDF ไม่ขึ้น
+        public_id: path.parse(originalName).name.replace(/[^a-zA-Z0-9]/g, "_") + "-" + Date.now() + path.extname(originalName) // raw ต้องมีนามสกุลไฟล์ด้วย
       },
       (error, result) => {
         if (result) resolve(result);
