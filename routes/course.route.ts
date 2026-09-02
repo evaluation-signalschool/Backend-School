@@ -11,6 +11,7 @@ import {
   toggleBatchActive,
   toggleRegistration,
 } from "../controller/course.controller";
+import { getTrainingSummary } from "../controller/summary.controller";
 import {
   addSubject,
   addSubjectGroup,
@@ -26,6 +27,7 @@ const router = Router();
 
 // กำหนด Endpoint เป็น GET /courses
 router.get("/courses", getGroupedCourses);
+router.get("/training-summary", getTrainingSummary);
 router.get("/subjects/:batchId", getSubjectsByBatch);
 router.post("/courses", addCourse);
 router.post("/batches", addBatch);
