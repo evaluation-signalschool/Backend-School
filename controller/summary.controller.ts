@@ -479,14 +479,14 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       batches: any[];
     }
 
-    const coursesMap: Record<string, CourseGroupItem> = {};
+    const coursesMap: Record<number, CourseGroupItem> = {};
 
     courseRows.forEach((row: any) => {
-      const name = row.course_name;
-      if (!coursesMap[name]) {
-        coursesMap[name] = {
-          course_id: row.course_id,
-          course_name: name,
+      const cId = Number(row.course_id);
+      if (!coursesMap[cId]) {
+        coursesMap[cId] = {
+          course_id: cId,
+          course_name: row.course_name,
           curriculum_year: row.curriculum_year,
           is_active: false,
           batches: []
@@ -496,9 +496,9 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       if (row.batch_id) {
         const isBatchActive = Boolean(row.is_active);
         if (isBatchActive) {
-          coursesMap[name].is_active = true;
+          coursesMap[cId].is_active = true;
         }
-        coursesMap[name].batches.push({
+        coursesMap[cId].batches.push({
           batch_id: row.batch_id,
           batch_name: row.batch_name,
           start_date: row.start_date,
@@ -526,11 +526,13 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
 
     if (courseId) {
       targetCourse = availableCourses.find((c) => c.course_id === Number(courseId));
-    } else if (courseName) {
-      const normalizedQuery = String(courseName).trim().toLowerCase();
-      targetCourse = availableCourses.find(
-        (c) => c.course_name.trim().toLowerCase() === normalizedQuery || c.course_name.includes(String(courseName))
-      );
+    }
+    if (!targetCourse && courseName) {
+      const normalizedQuery = String(courseName).replace(/[\s()]/g, '').toLowerCase();
+      targetCourse = availableCourses.find((c) => {
+        const cNorm = c.course_name.replace(/[\s()]/g, '').toLowerCase();
+        return cNorm === normalizedQuery || cNorm.includes(normalizedQuery) || normalizedQuery.includes(cNorm);
+      });
     }
 
     // หากไม่ระบุ หรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่เปิดใช้งานอยู่
