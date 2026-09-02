@@ -568,8 +568,20 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       targetCourse = availableCourses.find((c) => c.batches.length > 0) || availableCourses[0];
     }
 
-    // เรียงลำดับรุ่นตาม batch_id (หรือ start_date) จากรุ่นแรกไปรุ่นล่าสุด
-    targetCourse.batches.sort((a, b) => a.batch_id - b.batch_id);
+    // เรียงลำดับรุ่นตามลำดับรุ่น (เช่น รุ่นที่ 68 มาก่อน รุ่นที่ 70)
+    const extractBatchNum = (name: string): number => {
+      const match = String(name).match(/\d+/);
+      return match ? parseInt(match[0], 10) : 0;
+    };
+
+    targetCourse.batches.sort((a, b) => {
+      const numA = extractBatchNum(a.batch_name);
+      const numB = extractBatchNum(b.batch_name);
+      if (numA !== 0 && numB !== 0 && numA !== numB) {
+        return numA - numB;
+      }
+      return a.batch_id - b.batch_id;
+    });
 
     const allBatches = targetCourse.batches;
 
@@ -591,8 +603,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
 
     const allBatchIds = allBatches.map((b) => b.batch_id);
 
-    // 3. สร้างรายการเปรียบเทียบคู่รุ่น ก่อนหน้า และ หลัง (Pairwise comparisons)
-    // ตัวอย่าง: รุ่นที่ 1 เทียบกับ รุ่นที่ 2, รุ่นที่ 2 เทียบกับ รุ่นที่ 3
+    // 3. สร้างรายการเปรียบเทียบคู่รุ่น ก่อนหน้า และ หลัง (เรียงจากรุ่นก่อนหน้าไปรุ่นหลัง)
     const pairwiseComparisons = [];
     for (let i = 0; i < allBatches.length - 1; i++) {
       const prev = allBatches[i];
@@ -603,7 +614,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
         prevBatchName: prev.batch_name,
         currBatchId: curr.batch_id,
         currBatchName: curr.batch_name,
-        label: `เปรียบเทียบ ${prev.batch_name} กับ ${curr.batch_name} (ก่อนหน้า vs หลัง)`
+        label: `เปรียบเทียบ ${prev.batch_name} กับ ${curr.batch_name}`
       });
     }
 

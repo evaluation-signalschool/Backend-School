@@ -40,6 +40,20 @@ export const checkConnection = async () => {
       )
     `);
 
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS training_summaries (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        course_name VARCHAR(255) NOT NULL,
+        cohort_key VARCHAR(100) NOT NULL,
+        executive_summary TEXT,
+        action_plan TEXT,
+        updated_by VARCHAR(100) DEFAULT 'Admin',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_course_cohort (course_name, cohort_key)
+      )
+    `);
+
     try {
       await conn.query(`ALTER TABLE evaluation_forms ADD COLUMN form_description TEXT NULL`);
     } catch (_) {}

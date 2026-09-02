@@ -13,6 +13,11 @@ import {
 } from "../controller/course.controller";
 import { getTrainingSummary } from "../controller/summary.controller";
 import {
+  generateAiSummary,
+  saveSummary,
+  getSavedSummary
+} from "../controller/ai-summary.controller";
+import {
   addSubject,
   addSubjectGroup,
   getAllSubjectGroups,
@@ -28,6 +33,9 @@ const router = Router();
 // กำหนด Endpoint เป็น GET /courses
 router.get("/courses", getGroupedCourses);
 router.get("/training-summary", getTrainingSummary);
+router.post("/training-summary/ai-generate", generateAiSummary);
+router.post("/training-summary/save-summary", saveSummary);
+router.get("/training-summary/get-summary", getSavedSummary);
 router.get("/subjects/:batchId", getSubjectsByBatch);
 router.post("/courses", addCourse);
 router.post("/batches", addBatch);
