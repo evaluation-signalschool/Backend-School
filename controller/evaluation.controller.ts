@@ -190,7 +190,7 @@ export const getEvaluationById = async (
 
     // ดึงตัวเลือก
     for (let q of questions) {
-      if (q.question_type === "choice") {
+      if (q.question_type === "choice" || q.question_type === "dropdown") {
         const [choices]: any = await conn.query(
           `SELECT * FROM evaluation_choices WHERE question_id = ? ORDER BY order_num ASC`,
           [q.id],
@@ -426,7 +426,7 @@ export const getEvaluationQuestions = async (
     );
     // 3. ดึงตัวเลือกทั้งหมดของคำถามแต่ละข้อ
     for (let q of questions) {
-      if (q.question_type === "choice") {
+      if (q.question_type === "choice" || q.question_type === "dropdown") {
         const [choices]: any = await conn.query(
           `SELECT * FROM evaluation_choices WHERE question_id = ? ORDER BY order_num ASC`,
           [q.id],
