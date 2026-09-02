@@ -362,7 +362,13 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
         };
       }
 
-      const formQuestions = allBatchQuestions.filter((q: any) => q.form_id === targetForm.form_id);
+      const formQuestions = allBatchQuestions.filter(
+        (q: any) =>
+          q.form_id === targetForm.form_id &&
+          q.question_type !== 'dropdown' &&
+          !q.question_text.includes('ตำแหน่ง') &&
+          !q.question_text.includes('ความรับผิดชอบ')
+      );
       const formSubs = submissions.filter((s: any) => s.form_id === targetForm.form_id);
 
       const topics: string[] = [];
