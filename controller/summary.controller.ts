@@ -521,18 +521,27 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       });
     }
 
-    // 2. ค้นหาหลักสูตรเป้าหมาย
+    // 2. ค้นหาหลักสูตรเป้าหมาย (ให้ความสำคัญกับ courseName ก่อน)
     let targetCourse: CourseGroupItem | undefined;
 
-    if (courseId) {
-      targetCourse = availableCourses.find((c) => c.course_id === Number(courseId));
-    }
-    if (!targetCourse && courseName) {
+    if (courseName) {
       const normalizedQuery = String(courseName).replace(/[\s()]/g, '').toLowerCase();
+      // 1) ค้นหาชื่อที่ตรงกันเป๊ะ
       targetCourse = availableCourses.find((c) => {
         const cNorm = c.course_name.replace(/[\s()]/g, '').toLowerCase();
-        return cNorm === normalizedQuery || cNorm.includes(normalizedQuery) || normalizedQuery.includes(cNorm);
+        return cNorm === normalizedQuery;
       });
+      // 2) ถ้าไม่เจอ ให้ค้นหาแบบข้อความบางส่วน
+      if (!targetCourse) {
+        targetCourse = availableCourses.find((c) => {
+          const cNorm = c.course_name.replace(/[\s()]/g, '').toLowerCase();
+          return cNorm.includes(normalizedQuery) || normalizedQuery.includes(cNorm);
+        });
+      }
+    }
+
+    if (!targetCourse && courseId) {
+      targetCourse = availableCourses.find((c) => c.course_id === Number(courseId));
     }
 
     // หากไม่ระบุ หรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่เปิดใช้งานอยู่
