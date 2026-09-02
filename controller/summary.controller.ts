@@ -311,10 +311,10 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
 
       const avg = s.totalScore / s.scoreCount;
       let level = "ปรับปรุง";
-      if (avg >= 4.50) level = "มากที่สุด";
-      else if (avg >= 3.50) level = "มาก";
-      else if (avg >= 2.50) level = "ปานกลาง";
-      else if (avg >= 1.50) level = "พอใช้";
+      if (avg >= 4.51) level = "มากที่สุด";
+      else if (avg >= 3.51) level = "มาก";
+      else if (avg >= 2.51) level = "ปานกลาง";
+      else if (avg >= 1.51) level = "พอใช้";
 
       const score1 = s.counts.q1 > 0 ? Number((s.scores.q1 / s.counts.q1).toFixed(2)) : "-";
       const score2 = s.counts.q2 > 0 ? Number((s.scores.q2 / s.counts.q2).toFixed(2)) : "-";
@@ -336,49 +336,89 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     });
 
     // ==========================================
-    // D. Course Results (evaluation_type = 'course')
+    // D. Course Results (Parts 1, 2, 3: course, director, committee)
     // ==========================================
-    const courseMap: any = {};
-    const courseForms = forms.filter((f: any) => f.evaluation_type === 'course');
+    const [allBatchQuestions]: any = await conn.query(
+      `SELECT q.id, q.form_id, q.question_text, q.question_type, q.order_num 
+       FROM evaluation_questions q
+       INNER JOIN evaluation_forms f ON q.form_id = f.id
+       WHERE f.batch_id = ?
+       ORDER BY q.form_id, q.order_num ASC`,
+      [batchId]
+    );
 
-    courseForms.forEach((form: any) => {
-      const key = `${form.form_id}`;
-      if (!courseMap[key]) {
-        courseMap[key] = {
-          curriculumName: "หลักสูตรทั้งหมด",
-          year: 2567, // you can fetch from courses table if needed
-          courseName: form.form_name,
+    const getFormPartSummary = (evalType: string, defaultTitle: string) => {
+      const targetForm = forms.find((f: any) => f.evaluation_type === evalType);
+      if (!targetForm) {
+        return {
+          formId: null,
+          formName: defaultTitle,
+          title: defaultTitle,
+          topics: [],
           scores: [],
-          totalScore: 0,
-          scoreCount: 0
+          levels: [],
+          hasData: false,
+          totalSubmissions: 0
         };
       }
-      
-      const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
-      formSubs.forEach((sub: any) => {
-        const subAnswers = answers.filter((a: any) => a.submission_id === sub.submission_id);
-        subAnswers.forEach((a: any) => {
-          courseMap[key].scores.push(Number(a.score_value));
-          courseMap[key].totalScore += Number(a.score_value);
-          courseMap[key].scoreCount += 1;
-        });
-      });
-    });
 
-    const courseResults = Object.values(courseMap).map((c: any) => {
-      const avg = c.scoreCount > 0 ? (c.totalScore / c.scoreCount) : 0;
-      let level = "ปรับปรุง";
-      if (avg >= 4.51) level = "มากที่สุด";
-      else if (avg >= 3.51) level = "มาก";
-      else if (avg >= 2.51) level = "ปานกลาง";
-      else if (avg >= 1.51) level = "พอใช้";
+      const formQuestions = allBatchQuestions.filter((q: any) => q.form_id === targetForm.form_id);
+      const formSubs = submissions.filter((s: any) => s.form_id === targetForm.form_id);
+
+      const topics: string[] = [];
+      const scores: (number | string)[] = [];
+      const percentages: (number | string)[] = [];
+      const levels: string[] = [];
+
+      formQuestions.forEach((q: any) => {
+        topics.push(q.question_text);
+        if (q.question_type === 'choice') {
+          const qAnswers = answers.filter((a: any) => a.question_id === q.id && a.score_value !== null && a.score_value !== undefined);
+          if (qAnswers.length > 0) {
+            const sum = qAnswers.reduce((acc: number, a: any) => acc + Number(a.score_value), 0);
+            const avg = Number((sum / qAnswers.length).toFixed(2));
+            const pct = Number(((avg / 5) * 100).toFixed(2));
+            scores.push(avg);
+            percentages.push(pct);
+
+            let lvl = 'ปรับปรุง';
+            if (avg >= 4.51) lvl = 'มากที่สุด';
+            else if (avg >= 3.51) lvl = 'มาก';
+            else if (avg >= 2.51) lvl = 'ปานกลาง';
+            else if (avg >= 1.51) lvl = 'พอใช้';
+            levels.push(lvl);
+          } else {
+            scores.push('-');
+            percentages.push('-');
+            levels.push('-');
+          }
+        } else {
+          // text หรือ dropdown
+          scores.push('-');
+          percentages.push('-');
+          levels.push('-');
+        }
+      });
 
       return {
-        ...c,
-        averageScore: Number(avg.toFixed(2)),
-        level
+        formId: targetForm.form_id,
+        formName: targetForm.form_name,
+        formDescription: targetForm.form_description || '',
+        title: targetForm.form_name || defaultTitle,
+        topics,
+        scores,
+        percentages,
+        levels,
+        hasData: topics.length > 0,
+        totalSubmissions: formSubs.length
       };
-    });
+    };
+
+    const courseResults = {
+      part1: getFormPartSummary('course', 'ผู้เรียนประเมินหลักสูตร'),
+      part2: getFormPartSummary('director', 'ผู้เรียนประเมินคณะกำกับหลักสูตร'),
+      part3: getFormPartSummary('committee', 'คณะกำกับหลักสูตรประเมินหลักสูตร'),
+    };
 
     res.status(200).json({
       success: true,
