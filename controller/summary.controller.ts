@@ -471,41 +471,62 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
 
     const [courseRows]: any = await conn.query(coursesSql);
 
+    interface BatchItem {
+      batch_id: number;
+      batch_name: string;
+      course_id: number;
+      curriculum_year: number;
+      start_date: string;
+      end_date: string;
+      is_active: boolean;
+      is_registration_open: boolean;
+    }
+
     interface CourseGroupItem {
       course_id: number;
       course_name: string;
-      curriculum_year: number;
+      curriculum_years: number[];
       is_active: boolean;
-      batches: any[];
+      batches: BatchItem[];
     }
 
-    const coursesMap: Record<number, CourseGroupItem> = {};
+    // รวมทุกรุ่นของหลักสูตรชื่อเดียวกันโดยไม่แยกตามปีการศึกษา
+    const coursesMap: Record<string, CourseGroupItem> = {};
 
     courseRows.forEach((row: any) => {
-      const cId = Number(row.course_id);
-      if (!coursesMap[cId]) {
-        coursesMap[cId] = {
-          course_id: cId,
+      const name = String(row.course_name).trim();
+      if (!coursesMap[name]) {
+        coursesMap[name] = {
+          course_id: row.course_id,
           course_name: row.course_name,
-          curriculum_year: row.curriculum_year,
+          curriculum_years: [row.curriculum_year],
           is_active: false,
           batches: []
         };
+      } else {
+        if (!coursesMap[name].curriculum_years.includes(row.curriculum_year)) {
+          coursesMap[name].curriculum_years.push(row.curriculum_year);
+        }
       }
 
       if (row.batch_id) {
         const isBatchActive = Boolean(row.is_active);
         if (isBatchActive) {
-          coursesMap[cId].is_active = true;
+          coursesMap[name].is_active = true;
         }
-        coursesMap[cId].batches.push({
-          batch_id: row.batch_id,
-          batch_name: row.batch_name,
-          start_date: row.start_date,
-          end_date: row.end_date,
-          is_active: isBatchActive,
-          is_registration_open: Boolean(row.is_registration_open)
-        });
+        // ป้องกันรุ่นซ้ำ
+        if (!coursesMap[name].batches.some((b) => b.batch_id === row.batch_id)) {
+          coursesMap[name].batches.push({
+            batch_id: row.batch_id,
+            batch_name: row.batch_name,
+            course_id: row.course_id,
+            curriculum_year: row.curriculum_year,
+            start_date: row.start_date,
+            end_date: row.end_date,
+            is_active: isBatchActive,
+            is_registration_open: Boolean(row.is_registration_open)
+          });
+        }
       }
     });
 
@@ -521,17 +542,15 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       });
     }
 
-    // 2. ค้นหาหลักสูตรเป้าหมาย (ให้ความสำคัญกับ courseName ก่อน)
+    // 2. ค้นหาหลักสูตรเป้าหมาย (ค้นหาตาม courseName ก่อน)
     let targetCourse: CourseGroupItem | undefined;
 
     if (courseName) {
       const normalizedQuery = String(courseName).replace(/[\s()]/g, '').toLowerCase();
-      // 1) ค้นหาชื่อที่ตรงกันเป๊ะ
       targetCourse = availableCourses.find((c) => {
         const cNorm = c.course_name.replace(/[\s()]/g, '').toLowerCase();
         return cNorm === normalizedQuery;
       });
-      // 2) ถ้าไม่เจอ ให้ค้นหาแบบข้อความบางส่วน
       if (!targetCourse) {
         targetCourse = availableCourses.find((c) => {
           const cNorm = c.course_name.replace(/[\s()]/g, '').toLowerCase();
@@ -544,23 +563,25 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       targetCourse = availableCourses.find((c) => c.course_id === Number(courseId));
     }
 
-    // หากไม่ระบุ หรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่เปิดใช้งานอยู่
+    // หากไม่ระบุ หรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่มีข้อมูล
     if (!targetCourse) {
-      targetCourse = availableCourses.find((c) => c.is_active) || availableCourses[0];
+      targetCourse = availableCourses.find((c) => c.batches.length > 0) || availableCourses[0];
     }
 
-    // 3. ตรวจสอบสถานะการเปิด/ปิด (is_active) ของหลักสูตรและรุ่น
-    const activeBatches = (targetCourse.batches || []).filter((b: any) => b.is_active);
+    // เรียงลำดับรุ่นตาม batch_id (หรือ start_date) จากรุ่นแรกไปรุ่นล่าสุด
+    targetCourse.batches.sort((a, b) => a.batch_id - b.batch_id);
 
-    if (activeBatches.length === 0) {
+    const allBatches = targetCourse.batches;
+
+    if (allBatches.length === 0) {
       return res.status(200).json({
         success: true,
         isActive: false,
-        message: `หลักสูตร "${targetCourse.course_name}" ปิดใช้งาน หรือยังไม่มีรุ่นที่เปิดใช้งานอยู่ในขณะนี้`,
+        message: `หลักสูตร "${targetCourse.course_name}" ยังไม่มีรุ่นที่เปิดสอนในระบบ`,
         course: {
           id: targetCourse.course_id,
           name: targetCourse.course_name,
-          year: targetCourse.curriculum_year,
+          years: targetCourse.curriculum_years,
           isActive: false
         },
         availableCourses,
@@ -568,9 +589,25 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       });
     }
 
-    const activeBatchIds = activeBatches.map((b: any) => b.batch_id);
+    const allBatchIds = allBatches.map((b) => b.batch_id);
 
-    // 4. ดึงรายวิชาและคะแนนสอบจริง (student_scores) ของรุ่นที่เปิดใช้งาน
+    // 3. สร้างรายการเปรียบเทียบคู่รุ่น ก่อนหน้า และ หลัง (Pairwise comparisons)
+    // ตัวอย่าง: รุ่นที่ 1 เทียบกับ รุ่นที่ 2, รุ่นที่ 2 เทียบกับ รุ่นที่ 3
+    const pairwiseComparisons = [];
+    for (let i = 0; i < allBatches.length - 1; i++) {
+      const prev = allBatches[i];
+      const curr = allBatches[i + 1];
+      pairwiseComparisons.push({
+        key: `compare:${prev.batch_id}:${curr.batch_id}`,
+        prevBatchId: prev.batch_id,
+        prevBatchName: prev.batch_name,
+        currBatchId: curr.batch_id,
+        currBatchName: curr.batch_name,
+        label: `เปรียบเทียบ ${prev.batch_name} กับ ${curr.batch_name} (ก่อนหน้า vs หลัง)`
+      });
+    }
+
+    // 4. ดึงรายวิชาและคะแนนสอบจริง (student_scores) ของทุกรุ่นในหลักสูตรนี้
     const scoreSql = `
       SELECT 
         s.id AS subject_id,
@@ -588,12 +625,12 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       JOIN course_batches cb ON sg.batch_id = cb.id
       LEFT JOIN subject_batch_settings sbs ON s.id = sbs.subject_id AND sbs.batch_id = sg.batch_id
       LEFT JOIN student_scores ss ON sbs.id = ss.setting_id
-      WHERE sg.batch_id IN (?) AND cb.is_active = 1
+      WHERE sg.batch_id IN (?)
       GROUP BY s.id, s.subject_name, s.is_su, sg.id, sg.group_name, sg.batch_id, cb.batch_name, sbs.max_score
       ORDER BY s.id ASC;
     `;
 
-    const [scoreRows]: any = await conn.query(scoreSql, [activeBatchIds]);
+    const [scoreRows]: any = await conn.query(scoreSql, [allBatchIds]);
 
     // 5. จัดกลุ่มรายวิชาและคะแนนตามชื่อวิชา
     const subjectMap: Record<string, any> = {};
@@ -625,7 +662,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
     // แปลงเป็น Array รายวิชาสำหรับแสดงผล
     const subjectList = Object.values(subjectMap).map((subj: any, index: number) => {
       const scoresForAvg: number[] = [];
-      activeBatches.forEach((b: any) => {
+      allBatches.forEach((b: any) => {
         const val = subj.batchScores[b.batch_id];
         if (val !== null && val !== undefined) {
           scoresForAvg.push(val);
@@ -636,13 +673,13 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
         ? Number((scoresForAvg.reduce((a, b) => a + b, 0) / scoresForAvg.length).toFixed(1))
         : 0;
 
-      // คำนวณผลต่าง (+/-) ถ้ามีอย่างน้อย 2 รุ่น
+      // คำนวณผลต่างเปรียบเทียบ (รุ่นล่าสุด - รุ่นแรก หรือ รุ่นก่อนหน้า)
       let diff: number | null = null;
-      if (activeBatches.length >= 2) {
-        const b1Score = subj.batchScores[activeBatches[0].batch_id];
-        const b2Score = subj.batchScores[activeBatches[1].batch_id];
-        if (b1Score !== null && b1Score !== undefined && b2Score !== null && b2Score !== undefined) {
-          diff = Number((b2Score - b1Score).toFixed(1));
+      if (allBatches.length >= 2) {
+        const firstBatchScore = subj.batchScores[allBatches[0].batch_id];
+        const lastBatchScore = subj.batchScores[allBatches[allBatches.length - 1].batch_id];
+        if (firstBatchScore !== null && firstBatchScore !== undefined && lastBatchScore !== null && lastBatchScore !== undefined) {
+          diff = Number((lastBatchScore - firstBatchScore).toFixed(1));
         }
       }
 
@@ -662,37 +699,25 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       ? Number((subjectsWithScore.reduce((acc, s) => acc + s.avgScore, 0) / subjectsWithScore.length).toFixed(1))
       : 0;
 
-    // 7. อันดับ 3 สูงสุด / 3 ต่ำสุด
-    const sortedDesc = [...subjectsWithScore].sort((a, b) => b.avgScore - a.avgScore);
-    const top3 = sortedDesc.slice(0, 3).map((s) => ({ name: s.name, score: s.avgScore }));
-
-    const sortedAsc = [...subjectsWithScore].sort((a, b) => a.avgScore - b.avgScore);
-    const bottom3 = sortedAsc.slice(0, 3).map((s) => ({ name: s.name, score: s.avgScore }));
-
-    // 8. พัฒนาการก้าวกระโดด & ประเด็นเฝ้าระวัง
+    // 7. พัฒนาการก้าวกระโดด & ประเด็นเฝ้าระวัง
     const subjectsWithDiff = subjectList.filter((s) => s.diff !== null);
     const topImproved = [...subjectsWithDiff].sort((a, b) => (b.diff || 0) - (a.diff || 0))[0] || null;
     const topDeclined = [...subjectsWithDiff].sort((a, b) => (a.diff || 0) - (b.diff || 0))[0] || null;
 
-    // 9. ข้อเสนอแนะเชิงลึก (Action Plans)
+    // 8. ข้อเสนอแนะเชิงลึก (Action Plans)
     const actionPlans: string[] = [];
-    if (top3.length > 0) {
-      actionPlans.push(
-        `กิจกรรมคลินิกการเรียนรู้ (Peer Tutoring): ส่งเสริมผู้เรียนที่มีคะแนนสูงในวิชา ${top3[0].name} มาร่วมเป็นพี่เลี้ยงถ่ายทอดประสบการณ์`
-      );
-    }
     if (topDeclined && topDeclined.diff && topDeclined.diff < 0) {
       actionPlans.push(
-        `ทบทวนหลังการปฏิบัติ (AAR): จัดประชุม AAR เข้มข้นในวิชา ${topDeclined.name} (ผลต่าง ${topDeclined.diff} คะแนน) เพื่อปรับแผนการสอน`
+        `ทบทวนหลังการปฏิบัติ (AAR): จัดประชุม AAR เข้มข้นในวิชา ${topDeclined.name} (ผลต่าง ${topDeclined.diff} คะแนน) เพื่อปรับปรุงแผนการสอนในรุ่นถัดไป`
       );
     }
-    if (bottom3.length > 0) {
+    if (topImproved && topImproved.diff && topImproved.diff > 0) {
       actionPlans.push(
-        `โครงการเสริมทักษะเชิงปฏิบัติการ: เพิ่มชั่วโมงฝึกฝนและการติวเข้มในวิชา ${bottom3[0].name} ก่อนการประเมินรอบถัดไป`
+        `ถอดบทเรียนความสำเร็จ (Best Practice): นำแนวทางการสอนวิชา ${topImproved.name} (+${topImproved.diff} คะแนน) ไปประยุกต์ใช้กับรายวิชาอื่นๆ`
       );
     }
     if (actionPlans.length === 0) {
-      actionPlans.push("จัดกิจกรรมส่งเสริมการเรียนรู้อย่างต่อเนื่อง และติดตามผลการเรียนรู้รายวิชาเป็นประจำ");
+      actionPlans.push("จัดกิจกรรมส่งเสริมการเรียนรู้อย่างต่อเนื่อง และติดตามผลการเรียนรู้รายวิชาเปรียบเทียบระหว่างรุ่นเป็นประจำ");
     }
 
     res.status(200).json({
@@ -701,19 +726,19 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       course: {
         id: targetCourse.course_id,
         name: targetCourse.course_name,
-        year: targetCourse.curriculum_year,
+        years: targetCourse.curriculum_years,
         isActive: true
       },
-      batches: activeBatches.map((b: any) => ({
+      batches: allBatches.map((b: any) => ({
         id: b.batch_id,
         name: b.batch_name,
         startDate: b.start_date,
-        endDate: b.end_date
+        endDate: b.end_date,
+        isActive: b.is_active
       })),
+      pairwiseComparisons,
       totalAvg,
       subjects: subjectList,
-      top3,
-      bottom3,
       topImproved: topImproved && (topImproved.diff || 0) > 0 ? { name: topImproved.name, diff: topImproved.diff } : null,
       topDeclined: topDeclined && (topDeclined.diff || 0) < 0 ? { name: topDeclined.name, diff: topDeclined.diff } : null,
       actionPlans,
