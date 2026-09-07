@@ -861,3 +861,359 @@ export const saveScoreSubmissions = async (
     connection.release();
   }
 };
+
+// ==========================================
+// 10. ระบบจัดลำดับผลการเรียน 1 ถึง N และ Tie-Breaking (คำนวณที่ Backend)
+// ==========================================
+export const getBatchRanking = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const batchId = req.query.batch_id || req.body?.batch_id;
+    if (!batchId) {
+      res.status(400).json({ success: false, message: "กรุณาระบุ batch_id" });
+      return;
+    }
+
+    // วิชาที่แอดมินเลือกสำหรับตัดสิน Tie-Break (หากไม่ส่งมา จะใช้ทุกวิชาที่มีเกรด)
+    let selectedSubIds: number[] = [];
+    if (req.body?.subject_ids && Array.isArray(req.body.subject_ids)) {
+      selectedSubIds = req.body.subject_ids.map(Number);
+    } else if (req.query.subject_ids) {
+      selectedSubIds = String(req.query.subject_ids).split(",").map(Number).filter(n => !isNaN(n));
+    }
+
+    // 1. ดึงเกณฑ์การตัดเกรด
+    let [criteria]: any = await conn.query(
+      `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
+       WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
+      [batchId],
+    );
+
+    if (!criteria || criteria.length === 0) {
+      criteria = [
+        { grade_name: "A", grade_point: 4.0, min_percent: 91 },
+        { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
+        { grade_name: "B", grade_point: 3.0, min_percent: 81 },
+        { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
+        { grade_name: "C", grade_point: 2.0, min_percent: 70 },
+        { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
+        { grade_name: "D", grade_point: 1.0, min_percent: 50 },
+        { grade_name: "F", grade_point: 0.0, min_percent: 0 },
+      ];
+    }
+
+    // 2. ดึงข้อมูลนักเรียนและคะแนนทุกวิชา
+    const query = `
+      SELECT 
+        st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
+        sub.id AS subject_id, sub.subject_name,
+        sub.group_id, 
+        sg.group_name, 
+        sg.credits AS credit, 
+        sbs.max_score, 
+        sub.is_su,
+        sc.raw_score,
+        sss.training_time_score,
+        sss.exam_time_score,
+        sss.behavior_score
+      FROM students st
+      JOIN subject_batch_settings sbs ON st.batch_id = sbs.batch_id
+      JOIN subjects sub ON sbs.subject_id = sub.id
+      JOIN subject_groups sg ON sub.group_id = sg.id 
+      LEFT JOIN student_scores sc ON st.id = sc.student_id AND sbs.id = sc.setting_id 
+      LEFT JOIN student_summary_scores sss ON st.id = sss.student_id AND st.batch_id = sss.batch_id
+      WHERE st.batch_id = ?
+      ORDER BY st.student_code ASC, sub.id ASC
+    `;
+
+    const [rows]: any = await conn.query(query, [batchId]);
+
+    if (!rows || rows.length === 0) {
+      res.json({
+        success: true,
+        data: [],
+        tiedGroups: [],
+        availableSubjects: [],
+        summary: { total_students: 0, completed_students: 0, incomplete_students: 0 },
+      });
+      return;
+    }
+
+    // 3. รวบรวมวิชาทั้งหมด และคำนวณคะแนนนักเรียนแต่ละคน
+    const groupsMap: Record<number, any> = {};
+    const studentsMap: Record<number, any> = {};
+    const masterSubjects: any[] = [];
+    const masterSubjectIds = new Set<number>();
+
+    rows.forEach((row: any) => {
+      // กลุ่มวิชา
+      if (!groupsMap[row.group_id]) {
+        groupsMap[row.group_id] = {
+          groupId: row.group_id,
+          groupName: row.group_name || "",
+          credit: Number(row.credit) || 0,
+          subjects: [],
+          group_max_score: 0,
+          is_su: Boolean(row.is_su),
+        };
+      }
+      const group = groupsMap[row.group_id];
+      if (!row.is_su) group.is_su = false;
+
+      // รายวิชา
+      if (!masterSubjectIds.has(row.subject_id)) {
+        masterSubjectIds.add(row.subject_id);
+        const newSub = {
+          id: row.subject_id,
+          name: row.subject_name,
+          max_score: Number(row.max_score) || 0,
+          group_name: row.group_name || "",
+          is_su: Boolean(row.is_su),
+        };
+        group.subjects.push(newSub);
+        masterSubjects.push(newSub);
+        group.group_max_score += newSub.max_score;
+      }
+
+      // นักเรียน
+      if (!studentsMap[row.student_id]) {
+        studentsMap[row.student_id] = {
+          student_id: row.student_id,
+          student_code: String(row.student_code || "").padStart(2, "0"),
+          rank_name: row.rank_name || "",
+          first_name: row.first_name || "",
+          last_name: row.last_name || "",
+          full_name: `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
+          total_raw_score: 0,
+          total_max_score: 0,
+          percent: "0.00",
+          gpa: "0.00",
+          subject_scores: {},
+          group_raw_scores: {},
+          scored_subjects_count: 0,
+          training_time_score: Number(row.training_time_score) || 0,
+          exam_time_score: Number(row.exam_time_score) || 0,
+          behavior_score: Number(row.behavior_score) || 0,
+        };
+      }
+
+      const st = studentsMap[row.student_id];
+      if (row.raw_score !== null && row.raw_score !== undefined) {
+        const score = Number(row.raw_score);
+        st.subject_scores[row.subject_id] = score;
+        st.group_raw_scores[row.group_id] = (st.group_raw_scores[row.group_id] || 0) + score;
+        st.total_raw_score += score;
+        st.scored_subjects_count++;
+      }
+    });
+
+    // หากไม่ได้ส่ง selectedSubIds มา ให้เลือกทุกวิชาที่มีเกรด (!is_su) โดยอัตโนมัติ
+    if (selectedSubIds.length === 0) {
+      selectedSubIds = masterSubjects.filter(s => !s.is_su).map(s => s.id);
+    }
+    const selectedSubSet = new Set<number>(selectedSubIds);
+
+    // 4. ตัดเกรด GPA และตรวจเช็คความสมบูรณ์ของหลักสูตร
+    const gradeSubjectsCount = masterSubjects.filter(s => !s.is_su).length;
+
+    const studentList = Object.values(studentsMap).map((student: any) => {
+      let totalIndexForGPA = 0;
+      let totalCreditForGPA = 0;
+
+      Object.values(groupsMap).forEach((grp: any) => {
+        const rawScore = student.group_raw_scores[grp.groupId];
+        if (rawScore !== undefined) {
+          if (!grp.is_su) {
+            const percent = grp.group_max_score > 0 ? (rawScore / grp.group_max_score) * 100 : 0;
+            let assignedGrade = criteria[criteria.length - 1];
+            for (const c of criteria) {
+              if (percent >= Number(c.min_percent)) {
+                assignedGrade = c;
+                break;
+              }
+            }
+            const indexValue = grp.credit * Number(assignedGrade.grade_point);
+            totalIndexForGPA += indexValue;
+            totalCreditForGPA += grp.credit;
+          }
+        }
+      });
+
+      student.gpa = totalCreditForGPA > 0 ? (totalIndexForGPA / totalCreditForGPA).toFixed(2) : "0.00";
+
+      // คำนวณคะแนนตัดสิน Tie-Break ตามวิชาที่เลือก
+      let tbScore = 0;
+      let tbMaxScore = 0;
+      let selectedScoredCount = 0;
+
+      masterSubjects.forEach((sub: any) => {
+        if (selectedSubSet.has(sub.id)) {
+          tbMaxScore += sub.max_score;
+          if (student.subject_scores[sub.id] !== undefined) {
+            tbScore += Number(student.subject_scores[sub.id]);
+            selectedScoredCount++;
+          }
+        }
+      });
+
+      student.tieBreakScore = tbScore;
+      student.tieBreakMaxScore = tbMaxScore;
+      student.scoredSubjectsCount = selectedScoredCount;
+
+      // ตรวจสอบความสมบูรณ์: นักเรียนมีคะแนนครบทุกวิชาหรือไม่
+      // หากมีคะแนนไม่ถึง 80% ของวิชาทั้งหมดในหลักสูตร ถือว่าคะแนนยังไม่สมบูรณ์
+      student.is_completed = student.scored_subjects_count >= Math.max(1, gradeSubjectsCount - 2);
+      student.completion_text = `${student.scored_subjects_count}/${gradeSubjectsCount}`;
+
+      delete student.group_raw_scores;
+      return student;
+    });
+
+    // 5. จัดเรียงลำดับ (Sorting Strategy):
+    // - คนที่คะแนนครบ (is_completed = true) ได้รับการจัดอันดับ 1 ถึง N
+    // - คนที่คะแนนไม่ครบ (เช่น มีแค่ 1 วิชา) ถูกผลักไปอยู่ท้ายตาราง ไม่ให้มาแย่งที่ 1
+    studentList.sort((a: any, b: any) => {
+      // 1. คนที่คะแนนครบมาก่อน
+      if (a.is_completed !== b.is_completed) {
+        return a.is_completed ? -1 : 1;
+      }
+
+      if (a.is_completed) {
+        // 2. เรียงตาม GPA สูงสุด
+        const gpaDiff = Number(b.gpa) - Number(a.gpa);
+        if (Math.abs(gpaDiff) > 0.0001) return gpaDiff;
+
+        // 3. ปลดล็อคด้วยคะแนนวิชาที่เลือก
+        if (selectedSubSet.size > 0) {
+          const tbDiff = b.tieBreakScore - a.tieBreakScore;
+          if (Math.abs(tbDiff) > 0.001) return tbDiff;
+        }
+
+        return 0; // ห้ามใช้ student_code ตัดสิน
+      } else {
+        // คนไม่ครบ เรียงตามคะแนนรวม
+        return b.total_raw_score - a.total_raw_score;
+      }
+    });
+
+    // 6. กำหนดอันดับและตรวจจับกลุ่มซ้ำ (Tied Groups Detection)
+    const GROUP_PALETTES = [
+      { bg: '#fffbe6', border: '#fa8c16', text: '#d46b08', label: 'สีส้มทอง' },
+      { bg: '#f9f0ff', border: '#9254de', text: '#531dab', label: 'สีม่วงพาสเทล' },
+      { bg: '#e6fffb', border: '#13c2c2', text: '#006d75', label: 'สีฟ้าอมเขียวทีล' },
+      { bg: '#fff0f6', border: '#f759ab', text: '#9e1068', label: 'สีชมพูโรส' },
+      { bg: '#e6f7ff', border: '#1890ff', text: '#003a8c', label: 'สีน้ำเงินสกาย' },
+      { bg: '#fcffe6', border: '#7cb305', text: '#389e0d', label: 'สีเขียวมะนาว' },
+      { bg: '#fff2e8', border: '#ff4d4f', text: '#a8071a', label: 'สีแดงปะการัง' },
+    ];
+
+    const completedStudents = studentList.filter((s: any) => s.is_completed);
+    const incompleteStudents = studentList.filter((s: any) => !s.is_completed);
+
+    const gpaMap = new Map<string, any[]>();
+    completedStudents.forEach((s: any) => {
+      if (!gpaMap.has(s.gpa)) gpaMap.set(s.gpa, []);
+      gpaMap.get(s.gpa)!.push(s);
+    });
+
+    const sortedGpas = Array.from(gpaMap.keys()).sort((a, b) => Number(b) - Number(a));
+    const tiedGroupsList: any[] = [];
+    let groupCounter = 0;
+
+    sortedGpas.forEach((gpa) => {
+      const cluster = gpaMap.get(gpa)!;
+      if (cluster.length > 1) {
+        groupCounter++;
+        const palette = GROUP_PALETTES[(groupCounter - 1) % GROUP_PALETTES.length];
+        const gId = groupCounter;
+
+        cluster.forEach((s: any) => {
+          s.isTiedGpa = true;
+          s.tiedGroupId = gId;
+          s.tiedGroupColor = palette.border;
+          s.tiedGroupBg = palette.bg;
+          s.tiedGroupText = palette.text;
+          s.tiedGroupCount = cluster.length;
+        });
+
+        tiedGroupsList.push({
+          groupId: gId,
+          gpa: gpa,
+          studentCount: cluster.length,
+          color: palette,
+          isResolved: false,
+          minRank: 0,
+          maxRank: 0,
+          studentCodes: cluster.map((s: any) => s.student_code).join(', '),
+        });
+      }
+    });
+
+    // กำหนด Rank ให้คนที่คะแนนครบ
+    completedStudents.forEach((s: any, idx: number) => {
+      s.calculatedRank = idx + 1;
+      s.manualRank = idx + 1;
+      s.isTrulyTied = false;
+
+      if (s.isTiedGpa) {
+        const cluster = gpaMap.get(s.gpa)!;
+        const sameScoreCount = cluster.filter(
+          (other: any) => Math.abs(other.tieBreakScore - s.tieBreakScore) <= 0.001
+        ).length;
+
+        if (selectedSubSet.size === 0) {
+          s.isTrulyTied = true;
+          s.tieBreakReason = `⚠️ เกรดเท่ากัน (กรุณาติ๊กเลือกวิชาด้านบนเพื่อตัดสิน)`;
+        } else if (sameScoreCount > 1) {
+          s.isTrulyTied = true;
+          s.tieBreakReason = `⚠️ คะแนนวิชาที่เลือกเท่ากัน (${s.tieBreakScore.toFixed(1)}) ติ๊กเลือกวิชาเพิ่มเพื่อตัดสิน`;
+        } else {
+          s.tieBreakReason = `เกรด ${s.gpa} (ชนะด้วยคะแนนวิชาที่เลือก: ${s.tieBreakScore.toFixed(1)} / ${s.tieBreakMaxScore})`;
+        }
+      } else {
+        s.tieBreakReason = `เกรดสะสม ${s.gpa}`;
+      }
+    });
+
+    // กำหนดสถานะให้คนที่ไม่ครบ (Incomplete)
+    incompleteStudents.forEach((s: any) => {
+      s.calculatedRank = null;
+      s.manualRank = null;
+      s.isTiedGpa = false;
+      s.isTrulyTied = false;
+      s.tieBreakReason = `⚠️ คะแนนยังไม่สมบูรณ์ (มีคะแนนเพียง ${s.scored_subjects_count}/${gradeSubjectsCount} วิชา - ไม่นำมาจัดอันดับ)`;
+    });
+
+    // อัปเดต minRank, maxRank และ isResolved สำหรับ tiedGroups
+    tiedGroupsList.forEach((tg) => {
+      const members = completedStudents.filter((s: any) => s.tiedGroupId === tg.groupId);
+      if (members.length > 0) {
+        tg.minRank = Math.min(...members.map((m: any) => m.manualRank));
+        tg.maxRank = Math.max(...members.map((m: any) => m.manualRank));
+        tg.studentCodes = members.map((m: any) => m.student_code).join(', ');
+        tg.isResolved = !members.some((m: any) => m.isTrulyTied);
+      }
+    });
+
+    res.json({
+      success: true,
+      data: studentList,
+      tiedGroups: tiedGroupsList,
+      availableSubjects: masterSubjects,
+      summary: {
+        batch_id: Number(batchId),
+        total_students: studentList.length,
+        completed_students: completedStudents.length,
+        incomplete_students: incompleteStudents.length,
+        total_subjects: masterSubjects.length,
+        selected_subjects_count: selectedSubSet.size,
+      },
+    });
+  } catch (error) {
+    console.error("Error calculating batch ranking:", error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ" });
+  }
+};
+
