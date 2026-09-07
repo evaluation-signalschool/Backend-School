@@ -876,12 +876,21 @@ export const getBatchRanking = async (
       return;
     }
 
-    // วิชาที่แอดมินเลือกสำหรับตัดสิน Tie-Break (หากไม่ส่งมา จะใช้ทุกวิชาที่มีเกรด)
+    // วิชาที่แอดมินเลือกสำหรับตัดสิน Tie-Break
     let selectedSubIds: number[] = [];
-    if (req.body?.subject_ids && Array.isArray(req.body.subject_ids)) {
+    let hasExplicitSubjects = false;
+
+    if (req.body?.subject_ids !== undefined && Array.isArray(req.body.subject_ids)) {
       selectedSubIds = req.body.subject_ids.map(Number);
-    } else if (req.query.subject_ids) {
-      selectedSubIds = String(req.query.subject_ids).split(",").map(Number).filter(n => !isNaN(n));
+      hasExplicitSubjects = true;
+    } else if (req.query?.subject_ids !== undefined) {
+      const qStr = String(req.query.subject_ids).trim();
+      if (qStr.length === 0) {
+        selectedSubIds = [];
+      } else {
+        selectedSubIds = qStr.split(",").map(Number).filter((n) => !isNaN(n));
+      }
+      hasExplicitSubjects = true;
     }
 
     // 1. ดึงเกณฑ์การตัดเกรด
@@ -1009,9 +1018,17 @@ export const getBatchRanking = async (
       }
     });
 
-    // หากไม่ได้ส่ง selectedSubIds มา ให้เลือกทุกวิชาที่มีเกรด (!is_su) โดยอัตโนมัติ
-    if (selectedSubIds.length === 0) {
-      selectedSubIds = masterSubjects.filter(s => !s.is_su).map(s => s.id);
+    // หาก Client ไม่ได้ส่ง subject_ids มาเลย (เช่น Initial Batch Load) ให้เลือกเฉพาะวิชาหลัก (M) หรือวิชาที่มีเกรดเป็นค่าเริ่มต้น
+    if (!hasExplicitSubjects) {
+      const mainSubs = masterSubjects.filter((s) => {
+        const g = (s.group_name || "").toUpperCase();
+        return (g.startsWith("M") && !g.startsWith("MN")) || g.includes("หลัก");
+      });
+      if (mainSubs.length > 0) {
+        selectedSubIds = mainSubs.map((s) => s.id);
+      } else {
+        selectedSubIds = masterSubjects.filter((s) => !s.is_su).map((s) => s.id);
+      }
     }
     const selectedSubSet = new Set<number>(selectedSubIds);
 
@@ -1197,11 +1214,16 @@ export const getBatchRanking = async (
       }
     });
 
+    const availableSubjectsList = masterSubjects.map((sub: any) => ({
+      ...sub,
+      selected: selectedSubSet.has(sub.id),
+    }));
+
     res.json({
       success: true,
       data: studentList,
       tiedGroups: tiedGroupsList,
-      availableSubjects: masterSubjects,
+      availableSubjects: availableSubjectsList,
       summary: {
         batch_id: Number(batchId),
         total_students: studentList.length,
