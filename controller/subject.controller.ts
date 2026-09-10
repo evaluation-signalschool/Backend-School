@@ -133,7 +133,7 @@ export const addSubject = async (req: Request, res: Response): Promise<void> => 
 export const getAllSubjectGroups = async (req: Request, res: Response) => {
   try {
     const [groups] = await conn.query(
-      "SELECT * FROM subject_groups ORDER BY id DESC",
+      "SELECT * FROM subject_groups ORDER BY batch_id ASC, group_name ASC",
     );
     res.json({ success: true, data: groups });
   } catch (error) {

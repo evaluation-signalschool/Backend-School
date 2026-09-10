@@ -111,6 +111,38 @@ export const getSubjectsByBatch = async (
       is_su: Boolean(row.is_su)
     }));
 
+    // จัดเรียงตามกลุ่มวิชา 1 ไปจนสุด (M01 -> M11 -> MN -> S -> P)
+    const getGroupPrefixOrder = (name: string): number => {
+      const upper = (name || '').trim().toUpperCase();
+      if (upper.startsWith('M') && !upper.startsWith('MN')) return 1;
+      if (upper.startsWith('MN')) return 2;
+      if (upper.startsWith('S')) return 3;
+      if (upper.startsWith('P')) return 4;
+      return 5;
+    };
+
+    const compareGroupNames = (aName: string, bName: string): number => {
+      const a = (aName || '').trim();
+      const b = (bName || '').trim();
+      const orderA = getGroupPrefixOrder(a);
+      const orderB = getGroupPrefixOrder(b);
+      if (orderA !== orderB) return orderA - orderB;
+      const matchA = a.match(/\d+/);
+      const matchB = b.match(/\d+/);
+      if (matchA && matchB) {
+        const numA = parseInt(matchA[0], 10);
+        const numB = parseInt(matchB[0], 10);
+        if (numA !== numB) return numA - numB;
+      }
+      return a.localeCompare(b, 'th', { numeric: true, sensitivity: 'base' });
+    };
+
+    formattedRows.sort((a: any, b: any) => {
+      const groupComp = compareGroupNames(a.group_name || '', b.group_name || '');
+      if (groupComp !== 0) return groupComp;
+      return (a.subject_id || 0) - (b.subject_id || 0);
+    });
+
     res.status(200).json({ success: true, data: formattedRows });
   } catch (error) {
     console.error("Error fetching subjects:", error);
@@ -137,6 +169,7 @@ export const getSubjectGroupsByBatch = async (
       SELECT id, group_name, credits 
       FROM subject_groups 
       WHERE batch_id = ?
+      ORDER BY group_name ASC
     `;
     const [rows]: any = await conn.query(sql, [batchId]);
 
