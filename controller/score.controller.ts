@@ -416,7 +416,8 @@ export const processGroupGrades = async (
         }
       }
 
-      const indexValue = totalGroupCredit * Number(assignedGrade.grade_point);
+      const safeGradePoint = Math.min(4.0, Math.max(0, Number(assignedGrade.grade_point) || 0));
+      const indexValue = totalGroupCredit * safeGradePoint;
 
       return {
         student_id: st.student_id,
@@ -426,7 +427,7 @@ export const processGroupGrades = async (
         total_max_score: totalGroupMaxScore,
         percent: percent.toFixed(2),
         grade: assignedGrade.grade_name,
-        grade_point: assignedGrade.grade_point,
+        grade_point: safeGradePoint.toFixed(2),
         index_value: indexValue.toFixed(2),
         subject_scores: st.subject_scores, // 👈 ส่งกระเป๋าคะแนนแยกวิชากลับไปด้วย
       };
@@ -642,7 +643,8 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
               }
             }
 
-            const indexValue = grp.credit * Number(assignedGrade.grade_point);
+            const gradePoint = Math.min(4.0, Math.max(0, Number(assignedGrade.grade_point) || 0));
+            const indexValue = grp.credit * gradePoint;
             student.group_results[grp.groupId] = {
               grade: assignedGrade.grade_name,
               index_value: indexValue.toFixed(2),
@@ -660,10 +662,11 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         }
       });
 
-      student.gpa =
+      const rawGpa =
         totalCreditForGPA > 0
-          ? (totalIndexForGPA / totalCreditForGPA).toFixed(2)
-          : "0.00";
+          ? totalIndexForGPA / totalCreditForGPA
+          : 0;
+      student.gpa = Math.min(4.0, Math.max(0, rawGpa)).toFixed(2);
       delete student.group_raw_scores; // ลบตัวแปรทดเลขทิ้ง
       return student;
     });
@@ -1051,14 +1054,16 @@ export const getBatchRanking = async (
                 break;
               }
             }
-            const indexValue = grp.credit * Number(assignedGrade.grade_point);
+            const gradePoint = Math.min(4.0, Math.max(0, Number(assignedGrade.grade_point) || 0));
+            const indexValue = grp.credit * gradePoint;
             totalIndexForGPA += indexValue;
             totalCreditForGPA += grp.credit;
           }
         }
       });
 
-      student.gpa = totalCreditForGPA > 0 ? (totalIndexForGPA / totalCreditForGPA).toFixed(2) : "0.00";
+      const rawGpa = totalCreditForGPA > 0 ? totalIndexForGPA / totalCreditForGPA : 0;
+      student.gpa = Math.min(4.0, Math.max(0, rawGpa)).toFixed(2);
 
       // คำนวณคะแนนตัดสิน Tie-Break ตามวิชาที่เลือก
       let tbScore = 0;
