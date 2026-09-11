@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { RowDataPacket } from "mysql2";
 import { conn } from "../dbconn";
+import { AuthRequest } from "../middleware/auth.middleware";
 
 // ==========================================
 // 3. อัปเดตคะแนนเต็มรายวิชา (Max Score)
@@ -50,7 +51,7 @@ export const updateSubjectMaxScore = async (
 // 4. ดึงข้อมูลคะแนนทั้งหมด (ของนักเรียน 1 คน) ฝั่งนร
 // ==========================================
 export const getStudentScores = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
@@ -60,6 +61,22 @@ export const getStudentScores = async (
     if (!studentId || !batchId) {
       res.status(400).json({ error: "กรุณาระบุ student_id และ batch_id" });
       return;
+    }
+
+    // 🛡️ ป้องกัน IDOR: ตรวจสอบสิทธิ์ว่า user ใน Token มีสิทธิ์เข้าถึงข้อมูลของ studentId หรือไม่
+    const currentUser = req.user;
+    if (currentUser) {
+      const isOwner = String(currentUser.student_id) === String(studentId);
+      const isAdmin = currentUser.role === "admin";
+      if (!isOwner && !isAdmin) {
+        console.warn(
+          `[Security Alert] IDOR attempt detected! User: ${currentUser.student_id || currentUser.email} tried to access scores of Student ID: ${studentId} from IP: ${req.ip}`
+        );
+        res.status(403).json({
+          error: "คุณไม่มีสิทธิ์เข้าถึงข้อมูลคะแนนของนักเรียนท่านอื่น",
+        });
+        return;
+      }
     }
 
     // 1. อัปเดต detailQuery เพื่อเช็คประวัติการประเมิน

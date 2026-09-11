@@ -44,3 +44,45 @@ export const verifyToken = (
     return;
   }
 };
+
+// Middleware สำหรับตรวจสอบสิทธิ์ผู้ดูแลระบบ (Admin) เท่านั้น
+export const verifyAdmin = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      message: "กรุณาเข้าสู่ระบบในฐานะแอดมิน (Token is missing)",
+    });
+    return;
+  }
+
+  try {
+    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const decoded = jwt.verify(token, secretKey) as any;
+
+    // ตรวจสอบว่ามี role เป็น admin หรือไม่
+    if (!decoded || decoded.role !== "admin") {
+      res.status(403).json({
+        success: false,
+        message: "สิทธิ์การเข้าถึงสำหรับแอดมินเท่านั้น (Admin access required)",
+      });
+      return;
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(403).json({
+      success: false,
+      message: "เซสชันหมดอายุ หรือไม่ได้รับอนุญาต (Invalid Token)",
+    });
+    return;
+  }
+};
+
