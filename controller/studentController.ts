@@ -112,8 +112,10 @@ export const getStudents = async (
   try {
     connection = await conn.getConnection();
 
-    let query = `SELECT * FROM students`;
+    // ไม่เลือกฟิลด์ password เพื่อป้องกันรหัสผ่านรั่วไหล
+    let query = `SELECT id, batch_id, student_code, rank_name, first_name, last_name, affiliation, email, phone FROM students`;
     let params: any[] = [];
+
 
     // ถ้ามีการเลือกรุ่นมา ให้กรองเฉพาะนักเรียนในรุ่นนั้น
     if (batch_id) {

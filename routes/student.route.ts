@@ -8,19 +8,20 @@ import {
   uploadStudent,
   resequenceStudents,
 } from "../controller/studentController";
+import { verifyAdmin } from "../middleware/auth.middleware";
 
 const router = express.Router();
 
 // ตั้งค่า Multer สำหรับรับไฟล์ที่อัปโหลดมาเก็บไว้ชั่วคราวในโฟลเดอร์ uploads/
 const upload = multer({ dest: "uploads/" });
 
-// กำหนด Endpoint: POST /api/students/upload (สมมติว่า prefix คือ /api/students)
-// ชื่อ 'csvFile' ตรงนี้จะต้องตรงกับชื่อฟิลด์ FormData ที่ส่งมาจาก Angular (formData.append('csvFile', ...))
-router.post("/students/upload", upload.single("csvFile"), uploadStudent);
-router.get("/students", getStudents);
-router.post("/students/add", addStudent);
-router.put("/students/resequence/:batch_id", resequenceStudents);
-router.put("/students/:id", updateStudent);
-router.delete("/students/:id", deleteStudent);
+// ทุก Route ในการจัดการนักเรียนต้องใช้สิทธิ์ Admin เท่านั้น
+router.post("/students/upload", verifyAdmin, upload.single("csvFile"), uploadStudent);
+router.get("/students", verifyAdmin, getStudents);
+router.post("/students/add", verifyAdmin, addStudent);
+router.put("/students/resequence/:batch_id", verifyAdmin, resequenceStudents);
+router.put("/students/:id", verifyAdmin, updateStudent);
+router.delete("/students/:id", verifyAdmin, deleteStudent);
+
 
 export default router;
