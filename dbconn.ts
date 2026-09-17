@@ -62,6 +62,37 @@ export const checkConnection = async () => {
       await conn.query(`ALTER TABLE evaluation_questions ADD COLUMN subject_for INT NULL`);
     } catch (_) {}
 
+    // Multi-Admin & Activity Logs Table Verification
+    try {
+      await conn.query(`ALTER TABLE admin ADD COLUMN name VARCHAR(255) NOT NULL DEFAULT 'ผู้ดูแลระบบ'`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE admin ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'admin'`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE admin ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE admin ADD COLUMN last_login_at TIMESTAMP NULL`);
+    } catch (_) {}
+
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS admin_activity_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        admin_id INT NOT NULL,
+        admin_name VARCHAR(255) NOT NULL,
+        admin_email VARCHAR(255) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        action_category VARCHAR(50) NOT NULL,
+        details TEXT NOT NULL,
+        ip_address VARCHAR(45) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_logs_created_at (created_at),
+        INDEX idx_logs_admin_id (admin_id),
+        INDEX idx_logs_category (action_category)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     console.log("Required tables checked/created.");
   } catch (error) {
     console.error("Error creating tables:", error);

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
-import { adminLogin, studentLogin } from "../controller/authController";
+import { adminLogin, adminLogout, studentLogin } from "../controller/authController";
+import { verifyAdmin } from "../middleware/auth.middleware";
 
 const router = Router();
 
@@ -19,6 +20,7 @@ const loginLimiter = rateLimit({
 // สร้าง Route สำหรับ Login (ต้องใช้ POST เพราะมีการส่งข้อมูลรหัสผ่าน)
 router.post("/student-login", loginLimiter, studentLogin);
 router.post("/admin/login", loginLimiter, adminLogin);
+router.post("/admin/logout", verifyAdmin, adminLogout);
 
 export default router;
 

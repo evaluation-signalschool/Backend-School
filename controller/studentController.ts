@@ -3,6 +3,8 @@ import fs from "fs";
 import csv from "csv-parser";
 import "multer";
 import { conn } from "../dbconn";
+import { AuthRequest } from "../middleware/auth.middleware";
+import { logAdminActivity } from "../utils/activityLogger";
 
 export const uploadStudent = async (
   req: Request,
@@ -87,6 +89,20 @@ export const uploadStudent = async (
         }
 
         await connection.commit();
+
+        const user = (req as AuthRequest).user;
+        if (user?.admin_id) {
+          logAdminActivity({
+            adminId: user.admin_id,
+            adminName: user.name,
+            adminEmail: user.email,
+            action: "CREATE_STUDENT",
+            category: "STUDENT",
+            details: `นำเข้าข้อมูลนักเรียนจากไฟล์ CSV จำนวน ${result.length} คน (รุ่น ID: ${batch_id})`,
+            req,
+          });
+        }
+
         res.status(200).json({ message: "อัปโหลดข้อมูลสำเร็จ" });
       } catch (error) {
         await connection.rollback();
@@ -199,6 +215,20 @@ export const addStudent = async (
     ]);
 
     await connection.commit();
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "CREATE_STUDENT",
+        category: "STUDENT",
+        details: `เพิ่มข้อมูลนักเรียน: รหัส ${finalStudentCode} ${rank_name || ""} ${first_name} ${last_name || ""} (รุ่น ID: ${batch_id})`,
+        req,
+      });
+    }
+
     return res.status(201).json({ message: "เพิ่มข้อมูลนักเรียนสำเร็จ" });
   } catch (error: any) {
     if (connection) await connection.rollback();
@@ -279,6 +309,19 @@ export const updateStudent = async (
         .json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการแก้ไข" });
     }
 
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "UPDATE_STUDENT",
+        category: "STUDENT",
+        details: `แก้ไขข้อมูลนักเรียน ID ${id}: รหัส ${student_code} ${rank_name || ""} ${first_name} ${last_name || ""}`,
+        req,
+      });
+    }
+
     return res.status(200).json({ message: "อัปเดตข้อมูลนักเรียนสำเร็จ" });
   } catch (error: any) {
     console.error(error);
@@ -314,13 +357,17 @@ export const deleteStudent = async (
     connection = await conn.getConnection();
     await connection.beginTransaction();
 
-    // ดึง batch_id ก่อนที่จะลบ
-    const [studentRows]: any = await connection.execute('SELECT batch_id FROM students WHERE id = ?', [id]);
+    // ดึง batch_id และข้อมูลนักเรียนก่อนที่จะลบ
+    const [studentRows]: any = await connection.execute(
+      'SELECT batch_id, student_code, rank_name, first_name, last_name FROM students WHERE id = ?', 
+      [id]
+    );
     if (studentRows.length === 0) {
       await connection.rollback();
       return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการลบ" });
     }
-    const batch_id = studentRows[0].batch_id;
+    const studentInfo = studentRows[0];
+    const batch_id = studentInfo.batch_id;
 
     // ลบนักเรียน
     await connection.execute(`DELETE FROM students WHERE id = ?`, [id]);
@@ -337,6 +384,20 @@ export const deleteStudent = async (
     }
 
     await connection.commit();
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "DELETE_STUDENT",
+        category: "STUDENT",
+        details: `ลบข้อมูลนักเรียน ID ${id}: รหัส ${studentInfo.student_code} ${studentInfo.rank_name || ""} ${studentInfo.first_name} ${studentInfo.last_name || ""} (รุ่น ID: ${batch_id})`,
+        req,
+      });
+    }
+
     return res.status(200).json({ message: "ลบและจัดเรียงเลขที่ใหม่สำเร็จ" });
   } catch (error) {
     if (connection) await connection.rollback();

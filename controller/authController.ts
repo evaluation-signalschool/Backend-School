@@ -73,6 +73,8 @@ export const studentLogin = async (
   }
 };
 
+import { logAdminActivity } from "../utils/activityLogger";
+
 export const adminLogin = async (
   req: Request,
   res: Response,
@@ -89,7 +91,7 @@ export const adminLogin = async (
     }
 
     // 2. ค้นหาแอดมินจากอีเมล
-    const sql = `SELECT * FROM admin WHERE email = ? LIMIT 1`;
+    const sql = `SELECT id, email, password, name, role, status FROM admin WHERE email = ? LIMIT 1`;
     const [rows]: any = await conn.query(sql, [email]);
 
     if (rows.length === 0) {
@@ -101,12 +103,21 @@ export const adminLogin = async (
 
     const admin = rows[0];
 
-    // 3. ตรวจสอบรหัสผ่าน
-    // ตอนนี้ใช้แบบ plain text ไปก่อนเพราะคุณ Insert '12345678' เข้าไปตรงๆ ตอนเทสต์
-    const isMatch = password === admin.password;
+    // ตรวจสอบสถานะการใช้งาน
+    if (admin.status === "inactive") {
+      return res.status(403).json({
+        success: false,
+        message: "บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบหลัก",
+      });
+    }
 
-    // 💡 แนะนำ: ถ้าขึ้นระบบจริง (Production) ควรเปลี่ยนไปใช้ bcrypt
-    // const isMatch = await bcrypt.compare(password, admin.password);
+    // 3. ตรวจสอบรหัสผ่าน (รองรับทั้ง bcrypt และ plain text fallback)
+    let isMatch = false;
+    if (typeof admin.password === "string" && (admin.password.startsWith("$2a$") || admin.password.startsWith("$2b$"))) {
+      isMatch = await bcrypt.compare(password, admin.password);
+    } else {
+      isMatch = password === admin.password;
+    }
 
     if (!isMatch) {
       return res.status(401).json({
@@ -115,18 +126,41 @@ export const adminLogin = async (
       });
     }
 
+    // อัปเดตเวลาเข้าสู่ระบบล่าสุด
+    try {
+      await conn.query("UPDATE admin SET last_login_at = NOW() WHERE id = ?", [admin.id]);
+    } catch (e) {
+      console.error("Failed to update last_login_at:", e);
+    }
+
     // 4. สร้าง Token ให้แอดมินเอาไปใช้จัดการระบบ
     const secretKey = process.env.JWT_SECRET || "SIGNAL";
+
+    const adminRole = admin.role || "admin";
+    const adminName = admin.name || "ผู้ดูแลระบบ";
 
     const token = jwt.sign(
       {
         admin_id: admin.id,
         email: admin.email,
-        role: "admin", // 👈 ใส่ role ไปใน token เผื่อไว้แยกสิทธิ์ตรวจสอบ (Middleware) ว่าเป็นแอดมินจริงๆ
+        name: adminName,
+        role: adminRole,
+        status: admin.status || "active",
       },
       secretKey,
-      { expiresIn: "1d" }, // 👈 แอดมินมักจะใช้งานนานกว่านักเรียน เลยตั้งให้หมดอายุใน 1 วัน (1d) ไปเลย
+      { expiresIn: "1d" },
     );
+
+    // บันทึก Activity Log เข้าสู่ระบบ
+    await logAdminActivity({
+      adminId: admin.id,
+      adminName: adminName,
+      adminEmail: admin.email,
+      action: "LOGIN",
+      category: "AUTH",
+      details: `เข้าสู่ระบบสำเร็จ (สิทธิ์: ${adminRole === "superadmin" ? "ผู้ดูแลระบบหลัก (Super Admin)" : "ผู้ดูแลระบบ (Admin)"})`,
+      req,
+    });
 
     return res.status(200).json({
       success: true,
@@ -135,10 +169,44 @@ export const adminLogin = async (
       adminData: {
         admin_id: admin.id,
         email: admin.email,
+        name: adminName,
+        role: adminRole,
+        status: admin.status || "active",
       },
     });
   } catch (error: any) {
     console.error("Admin Login Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดที่เซิร์ฟเวอร์",
+    });
+  }
+};
+
+export const adminLogout = async (
+  req: any,
+  res: Response,
+): Promise<Response> => {
+  try {
+    const user = req.user;
+    if (user && user.admin_id) {
+      await logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name || "ผู้ดูแลระบบ",
+        adminEmail: user.email || "-",
+        action: "LOGOUT",
+        category: "AUTH",
+        details: "ออกจากระบบ",
+        req,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "ออกจากระบบสำเร็จ",
+    });
+  } catch (error: any) {
+    console.error("Admin Logout Error:", error);
     return res.status(500).json({
       success: false,
       message: "เกิดข้อผิดพลาดที่เซิร์ฟเวอร์",

@@ -9,6 +9,8 @@ import evaluationRouter from "./routes/evaluation.route";
 import profileEditRoutes from "./routes/profileEdit.route";
 import newsRoutes from "./routes/news.route";
 import securityTestRoutes from "./routes/security-test.route";
+import adminUserRoutes from "./routes/admin-user.route";
+import adminLogRoutes from "./routes/admin-log.route";
 const app = express();
 
 // 2. เรียกใช้ middleware cors ก่อนที่จะเรียก routes
@@ -31,5 +33,7 @@ app.use("/api", evaluationRouter);
 app.use("/api", profileEditRoutes);
 app.use("/api", newsRoutes);
 app.use("/api", securityTestRoutes);
+app.use("/api", adminUserRoutes);
+app.use("/api", adminLogRoutes);
 
 export default app;

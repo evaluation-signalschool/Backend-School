@@ -45,7 +45,7 @@ export const verifyToken = (
   }
 };
 
-// Middleware สำหรับตรวจสอบสิทธิ์ผู้ดูแลระบบ (Admin) เท่านั้น
+// Middleware สำหรับตรวจสอบสิทธิ์ผู้ดูแลระบบ (Admin และ Super Admin)
 export const verifyAdmin = (
   req: AuthRequest,
   res: Response,
@@ -66,11 +66,70 @@ export const verifyAdmin = (
     const secretKey = process.env.JWT_SECRET || "SIGNAL";
     const decoded = jwt.verify(token, secretKey) as any;
 
-    // ตรวจสอบว่ามี role เป็น admin หรือไม่
-    if (!decoded || decoded.role !== "admin") {
+    // ตรวจสอบว่ามี role เป็น admin หรือ superadmin หรือไม่
+    if (!decoded || (decoded.role !== "admin" && decoded.role !== "superadmin")) {
       res.status(403).json({
         success: false,
         message: "สิทธิ์การเข้าถึงสำหรับแอดมินเท่านั้น (Admin access required)",
+      });
+      return;
+    }
+
+    // ตรวจสอบสถานะว่าถูกระงับหรือไม่
+    if (decoded.status === "inactive") {
+      res.status(403).json({
+        success: false,
+        message: "บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบหลัก",
+      });
+      return;
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(403).json({
+      success: false,
+      message: "เซสชันหมดอายุ หรือไม่ได้รับอนุญาต (Invalid Token)",
+    });
+    return;
+  }
+};
+
+// Middleware สำหรับตรวจสอบสิทธิ์ผู้ดูแลระบบหลัก (Super Admin เท่านั้น)
+export const verifySuperAdmin = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      message: "กรุณาเข้าสู่ระบบในฐานะแอดมินหลัก (Token is missing)",
+    });
+    return;
+  }
+
+  try {
+    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const decoded = jwt.verify(token, secretKey) as any;
+
+    // ตรวจสอบว่ามี role เป็น superadmin เท่านั้น
+    if (!decoded || decoded.role !== "superadmin") {
+      res.status(403).json({
+        success: false,
+        message: "สิทธิ์การเข้าถึงสำหรับผู้ดูแลระบบหลักเท่านั้น (Super Admin access required)",
+      });
+      return;
+    }
+
+    // ตรวจสอบสถานะว่าถูกระงับหรือไม่
+    if (decoded.status === "inactive") {
+      res.status(403).json({
+        success: false,
+        message: "บัญชีของคุณถูกระงับการใช้งาน",
       });
       return;
     }

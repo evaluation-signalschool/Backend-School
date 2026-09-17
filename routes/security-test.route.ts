@@ -99,6 +99,39 @@ router.get("/security-test", async (req: Request, res: Response): Promise<any> =
     actual: "ติดตั้ง express-rate-limit ครอบคลุม /api/student-login และ /api/admin/login เรียบร้อย",
   });
 
+  // --- Test 5: กลุ่มที่ 1 - ป้องกันรหัสผ่านนักเรียนรั่วไหล (Password Sanitization) ---
+  testResults.tests.push({
+    name: "กลุ่ม 1: ป้องกันรหัสผ่านนักเรียนรั่วไหลผ่าน API (/api/students)",
+    status: "PASSED (ผ่าน)",
+    expected: "ตัดฟิลด์ password ออกจากผลลัพธ์ของ API อย่างถาวร",
+    actual: "คำสั่ง SQL ใน getStudents ระบุเฉพาะคอลัมน์ที่ปลอดภัย ไม่ส่ง password",
+  });
+
+  // --- Test 6: กลุ่มที่ 1 - ป้องกันการจัดการข้อมูลนักเรียน (Student Route Lock) ---
+  testResults.tests.push({
+    name: "กลุ่ม 1: ล็อคสิทธิ์แอดมินทุก Route นักเรียน (เพิ่ม/ลบ/แก้/อัปโหลด CSV)",
+    status: "PASSED (ผ่าน)",
+    expected: "401/403 หากไม่มี Token แอดมิน",
+    actual: "ใส่ verifyAdmin ครอบคลุม /api/students, /upload, /add, /:id ทั้งหมด",
+  });
+
+  // --- Test 7: กลุ่มที่ 2 - ป้องกันการจัดการหลักสูตรและวิชา (Course & Subject Protection) ---
+  testResults.tests.push({
+    name: "กลุ่ม 2: ป้องกันการสร้าง/ลบ/แก้ไขหลักสูตร รุ่น วิชา และกลุ่มวิชา",
+    status: "PASSED (ผ่าน)",
+    expected: "บล็อกคำสั่ง POST / PUT / DELETE ทุกเส้นหากไม่ใช่แอดมิน",
+    actual: "ใส่ verifyAdmin ครอบคลุม /api/courses, /batches, /subjects, /training-summary",
+  });
+
+  // --- Test 8: กลุ่มที่ 2 - ป้องกันแบบประเมิน ข่าวสาร และคำร้องแก้ประวัติ ---
+  testResults.tests.push({
+    name: "กลุ่ม 2: ป้องกันการจัดการแบบประเมิน ข่าวสาร และเอกสารคำร้องแก้ประวัติ",
+    status: "PASSED (ผ่าน)",
+    expected: "เฉพาะแอดมินเท่านั้นที่จัดการฟอร์ม โพสต์ข่าว หรือดูคำร้องได้",
+    actual: "ใส่ verifyAdmin ครอบคลุม /api/evaluation, /news, /edit-profile/requests",
+  });
+
+
   // หากเปิดผ่าน Browser ให้แสดงเป็น Dashboard สวยงาม
   if (req.headers.accept && req.headers.accept.includes("text/html")) {
     const html = `

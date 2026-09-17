@@ -4,6 +4,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { supabase } from "../config/supabase";
+import { AuthRequest } from "../middleware/auth.middleware";
+import { logAdminActivity } from "../utils/activityLogger";
 
 // multer config: ใช้ memoryStorage เพื่อเก็บไฟล์ใน RAM ชั่วคราวก่อนส่งไป Supabase
 const storage = multer.memoryStorage();
@@ -67,6 +69,20 @@ export const addNews = async (req: Request, res: Response): Promise<void> => {
        VALUES (?, ?, ?, ?, ?, ?)`,
       [title, description, type, news_date || null, file_url, file_name]
     );
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "CREATE_NEWS",
+        category: "NEWS",
+        details: `เพิ่มข่าวสาร/ประกาศ: "${title}" (ประเภท: ${type})`,
+        req,
+      });
+    }
+
     res.status(201).json({ success: true, message: "เพิ่มข่าวสารสำเร็จ" });
   } catch (error) {
     console.error("Upload error:", error);
@@ -93,6 +109,20 @@ export const deleteNews = async (req: Request, res: Response): Promise<void> => 
       res.status(404).json({ success: false, message: "ไม่พบข่าวที่ต้องการลบ" });
       return;
     }
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "DELETE_NEWS",
+        category: "NEWS",
+        details: `ลบข่าวสาร/ประกาศ ID: ${id}`,
+        req,
+      });
+    }
+
     res.json({ success: true, message: "ลบข่าวสารสำเร็จ" });
   } catch (error) {
     console.error(error);
@@ -140,6 +170,19 @@ export const updateNews = async (req: Request, res: Response): Promise<void> => 
     if (result.affectedRows === 0) {
       res.status(404).json({ success: false, message: "ไม่พบข่าวที่ต้องการแก้ไข" });
       return;
+    }
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "UPDATE_NEWS",
+        category: "NEWS",
+        details: `แก้ไขข่าวสาร ID ${id}: "${title}" (ประเภท: ${type})`,
+        req,
+      });
     }
 
     res.status(200).json({ success: true, message: "แก้ไขข่าวสารสำเร็จ" });

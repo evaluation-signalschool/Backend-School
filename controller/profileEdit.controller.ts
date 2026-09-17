@@ -3,6 +3,8 @@ import { conn } from "../dbconn";
 import fs from "fs";
 import cloudinary from "../config/cloudinary";
 import streamifier from "streamifier";
+import { AuthRequest } from "../middleware/auth.middleware";
+import { logAdminActivity } from "../utils/activityLogger";
 
 const uploadToCloudinary = (buffer: Buffer): Promise<any> => {
     return new Promise((resolve, reject) => {
@@ -206,6 +208,20 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
         }
         
         await connection.commit();
+
+        const user = (req as AuthRequest).user;
+        if (user?.admin_id) {
+            logAdminActivity({
+                adminId: user.admin_id,
+                adminName: user.name,
+                adminEmail: user.email,
+                action: status === 'approved' ? 'APPROVE_PROFILE' : 'REJECT_PROFILE',
+                category: 'PROFILE',
+                details: `${status === 'approved' ? 'อนุมัติ' : 'ปฏิเสธ'}คำขอแก้ไขข้อมูลนักเรียน รหัสคำขอ ID ${id} (นักเรียน ID: ${request.student_id}, ข้อมูลใหม่: ${request.new_rank || ''} ${request.new_first_name} ${request.new_last_name || ''})`,
+                req,
+            });
+        }
+
         return res.status(200).json({ message: `Request ${status} successfully.` });
     } catch (error) {
         if (connection) await connection.rollback();

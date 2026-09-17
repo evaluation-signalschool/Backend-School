@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { RowDataPacket } from "mysql2";
 import { conn } from "../dbconn";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { logAdminActivity } from "../utils/activityLogger";
 
 // ==========================================
 // 3. อัปเดตคะแนนเต็มรายวิชา (Max Score)
@@ -67,7 +68,7 @@ export const getStudentScores = async (
     const currentUser = req.user;
     if (currentUser) {
       const isOwner = String(currentUser.student_id) === String(studentId);
-      const isAdmin = currentUser.role === "admin";
+      const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
       if (!isOwner && !isAdmin) {
         console.warn(
           `[Security Alert] IDOR attempt detected! User: ${currentUser.student_id || currentUser.email} tried to access scores of Student ID: ${studentId} from IP: ${req.ip}`
@@ -272,6 +273,19 @@ export const saveAdminBulkScores = async (
     }
 
     await connection.commit();
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminEmail: user.email,
+        action: "UPDATE_SCORE",
+        category: "SCORE",
+        details: `บันทึกคะแนนนักเรียนจำนวน ${scores.length} คน (รายวิชา ID: ${subject_id}, รุ่น ID: ${batch_id})`,
+        req,
+      });
+    }
 
     res.status(200).json({
       success: true,
