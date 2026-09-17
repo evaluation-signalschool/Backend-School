@@ -64,6 +64,18 @@ export const checkConnection = async () => {
 
     // Multi-Admin & Activity Logs Table Verification
     try {
+      await conn.query(`ALTER TABLE admin ADD COLUMN username VARCHAR(255) NULL`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE admin ADD COLUMN email VARCHAR(255) NULL`);
+    } catch (_) {}
+    try {
+      await conn.query(`UPDATE admin SET username = 'admin' WHERE (username IS NULL OR username = '') AND (email = 'admin@gmail.com' OR email IS NULL)`);
+      await conn.query(`UPDATE admin SET username = SUBSTRING_INDEX(email, '@', 1) WHERE (username IS NULL OR username = '') AND email IS NOT NULL`);
+      await conn.query(`UPDATE admin SET email = CONCAT(username, '@school.internal') WHERE (email IS NULL OR email = '') AND username IS NOT NULL`);
+    } catch (_) {}
+
+    try {
       await conn.query(`ALTER TABLE admin ADD COLUMN name VARCHAR(255) NOT NULL DEFAULT 'ผู้ดูแลระบบ'`);
     } catch (_) {}
     try {
@@ -81,6 +93,7 @@ export const checkConnection = async () => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         admin_id INT NOT NULL,
         admin_name VARCHAR(255) NOT NULL,
+        admin_username VARCHAR(255) NULL,
         admin_email VARCHAR(255) NOT NULL,
         action VARCHAR(100) NOT NULL,
         action_category VARCHAR(50) NOT NULL,
@@ -92,6 +105,13 @@ export const checkConnection = async () => {
         INDEX idx_logs_category (action_category)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    try {
+      await conn.query(`ALTER TABLE admin_activity_logs ADD COLUMN admin_username VARCHAR(255) NULL`);
+    } catch (_) {}
+    try {
+      await conn.query(`UPDATE admin_activity_logs SET admin_username = SUBSTRING_INDEX(admin_email, '@', 1) WHERE (admin_username IS NULL OR admin_username = '') AND admin_email IS NOT NULL`);
+    } catch (_) {}
 
     console.log("Required tables checked/created.");
   } catch (error) {

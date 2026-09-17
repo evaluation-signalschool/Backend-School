@@ -11,14 +11,20 @@ export const getAllAdmins = async (
 ): Promise<Response> => {
   try {
     const [rows]: any = await conn.query(
-      `SELECT id, email, name, role, status, last_login_at, created_at, updated_at 
+      `SELECT id, username, email, name, role, status, last_login_at, created_at, updated_at 
        FROM admin 
        ORDER BY id ASC`
     );
 
+    const formattedAdmins = rows.map((a: any) => ({
+      ...a,
+      username: a.username || (a.email?.includes("@") ? a.email.split("@")[0] : a.email) || "admin",
+      email: a.email || a.username,
+    }));
+
     return res.status(200).json({
       success: true,
-      admins: rows,
+      admins: formattedAdmins,
     });
   } catch (error: any) {
     console.error("Get All Admins Error:", error);
@@ -34,15 +40,17 @@ export const createAdmin = async (
   req: AuthRequest,
   res: Response
 ): Promise<Response> => {
-  const { email, password, name, role } = req.body;
+  const { username, email, password, name, role } = req.body;
   const currentUser = req.user;
 
   try {
+    const targetUsername = (username || email || "").trim();
+
     // ตรวจสอบข้อมูลบังคับ
-    if (!email || !password || !name) {
+    if (!targetUsername || !password || !name) {
       return res.status(400).json({
         success: false,
-        message: "กรุณากรอกข้อมูลให้ครบถ้วน (ชื่อ, อีเมล, รหัสผ่าน)",
+        message: "กรุณากรอกข้อมูลให้ครบถ้วน (ชื่อ-นามสกุล, ชื่อผู้ใช้, รหัสผ่าน)",
       });
     }
 
@@ -54,19 +62,20 @@ export const createAdmin = async (
       });
     }
 
-    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedUsername = targetUsername.toLowerCase();
     const assignedRole = role === "superadmin" ? "superadmin" : "admin";
+    const assignedEmail = (email || (trimmedUsername.includes("@") ? trimmedUsername : `${trimmedUsername}@school.internal`)).trim().toLowerCase();
 
-    // ตรวจสอบว่ามีอีเมลนี้ในระบบแล้วหรือไม่
+    // ตรวจสอบว่ามีชื่อผู้ใช้นี้ในระบบแล้วหรือไม่
     const [existing]: any = await conn.query(
-      "SELECT id FROM admin WHERE email = ? LIMIT 1",
-      [trimmedEmail]
+      "SELECT id FROM admin WHERE username = ? OR email = ? LIMIT 1",
+      [trimmedUsername, assignedEmail]
     );
 
     if (existing.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "อีเมลนี้มีอยู่ในระบบแล้ว กรุณาใช้อีเมลอื่น",
+        message: "ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว กรุณาใช้ชื่อผู้ใช้อื่น",
       });
     }
 
@@ -74,18 +83,19 @@ export const createAdmin = async (
     const hashedPassword = await bcrypt.hash(password.trim(), 10);
 
     const [result]: any = await conn.query(
-      "INSERT INTO admin (email, password, name, role, status) VALUES (?, ?, ?, ?, 'active')",
-      [trimmedEmail, hashedPassword, name.trim(), assignedRole]
+      "INSERT INTO admin (username, email, password, name, role, status) VALUES (?, ?, ?, ?, ?, 'active')",
+      [trimmedUsername, assignedEmail, hashedPassword, name.trim(), assignedRole]
     );
 
     // บันทึก Log กิจกรรม
     await logAdminActivity({
       adminId: currentUser?.admin_id || 0,
       adminName: currentUser?.name || "ผู้ดูแลระบบหลัก",
-      adminEmail: currentUser?.email || "-",
+      adminUsername: currentUser?.username || currentUser?.email || "-",
+      adminEmail: currentUser?.email || currentUser?.username || "-",
       action: "CREATE_ADMIN",
       category: "ADMIN",
-      details: `เพิ่มผู้ดูแลระบบใหม่: ${name.trim()} (${trimmedEmail}) บทบาท: ${assignedRole === "superadmin" ? "Super Admin" : "Admin"}`,
+      details: `เพิ่มผู้ดูแลระบบใหม่: ${name.trim()} (ชื่อผู้ใช้: ${trimmedUsername}) บทบาท: ${assignedRole === "superadmin" ? "Super Admin" : "Admin"}`,
       req,
     });
 
@@ -122,7 +132,7 @@ export const updateAdmin = async (
   try {
     // ดึงข้อมูลเดิมของผู้ดูแลระบบคนนี้
     const [rows]: any = await conn.query(
-      "SELECT id, email, name, role, status FROM admin WHERE id = ? LIMIT 1",
+      "SELECT id, username, email, name, role, status FROM admin WHERE id = ? LIMIT 1",
       [adminId]
     );
 
@@ -134,6 +144,7 @@ export const updateAdmin = async (
     }
 
     const targetAdmin = rows[0];
+    const targetIdentifier = targetAdmin.username || targetAdmin.email;
 
     // ป้องกันไม่ให้แอดมินปิดการใช้งานบัญชีของตนเอง
     if (currentUser?.admin_id === adminId && status === "inactive") {
@@ -169,10 +180,11 @@ export const updateAdmin = async (
     await logAdminActivity({
       adminId: currentUser?.admin_id || 0,
       adminName: currentUser?.name || "ผู้ดูแลระบบหลัก",
-      adminEmail: currentUser?.email || "-",
+      adminUsername: currentUser?.username || currentUser?.email || "-",
+      adminEmail: currentUser?.email || currentUser?.username || "-",
       action: "UPDATE_ADMIN",
       category: "ADMIN",
-      details: `แก้ไขข้อมูลผู้ดูแลระบบ ID ${adminId} (${targetAdmin.email}): ชื่อเป็น '${updatedName}', บทบาทเป็น '${updatedRole}', สถานะเป็น '${updatedStatus}'`,
+      details: `แก้ไขข้อมูลผู้ดูแลระบบ ID ${adminId} (${targetIdentifier}): ชื่อเป็น '${updatedName}', บทบาทเป็น '${updatedRole}', สถานะเป็น '${updatedStatus}'`,
       req,
     });
 
@@ -214,7 +226,7 @@ export const resetAdminPassword = async (
 
   try {
     const [rows]: any = await conn.query(
-      "SELECT id, email, name FROM admin WHERE id = ? LIMIT 1",
+      "SELECT id, username, email, name FROM admin WHERE id = ? LIMIT 1",
       [adminId]
     );
 
@@ -226,6 +238,7 @@ export const resetAdminPassword = async (
     }
 
     const targetAdmin = rows[0];
+    const targetIdentifier = targetAdmin.username || targetAdmin.email;
     const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
 
     await conn.query("UPDATE admin SET password = ? WHERE id = ?", [
@@ -237,10 +250,11 @@ export const resetAdminPassword = async (
     await logAdminActivity({
       adminId: currentUser?.admin_id || 0,
       adminName: currentUser?.name || "ผู้ดูแลระบบหลัก",
-      adminEmail: currentUser?.email || "-",
+      adminUsername: currentUser?.username || currentUser?.email || "-",
+      adminEmail: currentUser?.email || currentUser?.username || "-",
       action: "RESET_PASSWORD_ADMIN",
       category: "ADMIN",
-      details: `รีเซ็ตรหัสผ่านสำหรับผู้ดูแลระบบ ID ${adminId} (${targetAdmin.name} - ${targetAdmin.email})`,
+      details: `รีเซ็ตรหัสผ่านสำหรับผู้ดูแลระบบ ID ${adminId} (${targetAdmin.name} - ${targetIdentifier})`,
       req,
     });
 
@@ -282,7 +296,7 @@ export const deleteAdmin = async (
 
   try {
     const [rows]: any = await conn.query(
-      "SELECT id, email, name, role FROM admin WHERE id = ? LIMIT 1",
+      "SELECT id, username, email, name, role FROM admin WHERE id = ? LIMIT 1",
       [adminId]
     );
 
@@ -294,6 +308,7 @@ export const deleteAdmin = async (
     }
 
     const targetAdmin = rows[0];
+    const targetIdentifier = targetAdmin.username || targetAdmin.email;
 
     // ป้องกันไม่ให้ลบ Super Admin คนสุดท้าย
     if (targetAdmin.role === "superadmin") {
@@ -314,10 +329,11 @@ export const deleteAdmin = async (
     await logAdminActivity({
       adminId: currentUser?.admin_id || 0,
       adminName: currentUser?.name || "ผู้ดูแลระบบหลัก",
-      adminEmail: currentUser?.email || "-",
+      adminUsername: currentUser?.username || currentUser?.email || "-",
+      adminEmail: currentUser?.email || currentUser?.username || "-",
       action: "DELETE_ADMIN",
       category: "ADMIN",
-      details: `ลบผู้ดูแลระบบ ID ${adminId} (${targetAdmin.name} - ${targetAdmin.email})`,
+      details: `ลบผู้ดูแลระบบ ID ${adminId} (${targetAdmin.name} - ${targetIdentifier})`,
       req,
     });
 

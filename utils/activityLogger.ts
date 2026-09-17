@@ -4,6 +4,7 @@ import { conn } from "../dbconn";
 export interface ActivityLogParams {
   adminId: number;
   adminName?: string;
+  adminUsername?: string;
   adminEmail?: string;
   action: string;
   category: "AUTH" | "STUDENT" | "SCORE" | "PROFILE" | "NEWS" | "ADMIN" | string;
@@ -32,22 +33,41 @@ export const logAdminActivity = async (params: ActivityLogParams): Promise<void>
   try {
     const ip = params.ipAddress || getClientIp(params.req);
     const adminName = params.adminName || "ผู้ดูแลระบบ";
-    const adminEmail = params.adminEmail || "-";
+    const adminUsername = params.adminUsername || (params.adminEmail?.includes("@") ? params.adminEmail.split("@")[0] : params.adminEmail) || "-";
+    const adminEmail = params.adminEmail || params.adminUsername || "-";
 
-    await conn.query(
-      `INSERT INTO admin_activity_logs 
-        (admin_id, admin_name, admin_email, action, action_category, details, ip_address) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        params.adminId,
-        adminName,
-        adminEmail,
-        params.action,
-        params.category,
-        params.details,
-        ip,
-      ]
-    );
+    try {
+      await conn.query(
+        `INSERT INTO admin_activity_logs 
+          (admin_id, admin_name, admin_username, admin_email, action, action_category, details, ip_address) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          params.adminId,
+          adminName,
+          adminUsername,
+          adminEmail,
+          params.action,
+          params.category,
+          params.details,
+          ip,
+        ]
+      );
+    } catch {
+      await conn.query(
+        `INSERT INTO admin_activity_logs 
+          (admin_id, admin_name, admin_email, action, action_category, details, ip_address) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          params.adminId,
+          adminName,
+          adminEmail,
+          params.action,
+          params.category,
+          params.details,
+          ip,
+        ]
+      );
+    }
   } catch (error) {
     console.error("Failed to log admin activity:", error);
   }

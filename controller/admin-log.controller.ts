@@ -69,9 +69,14 @@ export const getActivityLogs = async (
     `;
     const [logs]: any = await conn.query(dataSql, [...queryParams, limit, offset]);
 
+    const formattedLogs = logs.map((l: any) => ({
+      ...l,
+      admin_username: l.admin_username || (l.admin_email?.includes("@") ? l.admin_email.split("@")[0] : l.admin_email),
+    }));
+
     return res.status(200).json({
       success: true,
-      logs,
+      logs: formattedLogs,
       pagination: {
         total,
         page,
@@ -123,6 +128,11 @@ export const getTodayLogStats = async (
        LIMIT 5`
     );
 
+    const formattedRecent = recentRows.map((l: any) => ({
+      ...l,
+      admin_username: l.admin_username || (l.admin_email?.includes("@") ? l.admin_email.split("@")[0] : l.admin_email),
+    }));
+
     return res.status(200).json({
       success: true,
       stats: {
@@ -130,7 +140,7 @@ export const getTodayLogStats = async (
         todayActivities: activityRows[0]?.todayActivities || 0,
         activeAdminsToday: activeAdminRows[0]?.activeAdminsToday || 0,
       },
-      recentLogs: recentRows,
+      recentLogs: formattedRecent,
     });
   } catch (error: any) {
     console.error("Get Today Log Stats Error:", error);

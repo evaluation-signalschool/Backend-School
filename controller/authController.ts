@@ -79,25 +79,26 @@ export const adminLogin = async (
   req: Request,
   res: Response,
 ): Promise<Response> => {
-  const { email, password } = req.body;
+  const { username, email, password } = req.body;
+  const loginIdentifier = (username || email || "").trim();
 
   try {
     // 1. ตรวจสอบว่าส่งข้อมูลมาครบไหม
-    if (!email || !password) {
+    if (!loginIdentifier || !password) {
       return res.status(400).json({
         success: false,
-        message: "กรุณากรอกอีเมลและรหัสผ่านให้ครบถ้วน",
+        message: "กรุณากรอกชื่อผู้ใช้และรหัสผ่านให้ครบถ้วน",
       });
     }
 
-    // 2. ค้นหาแอดมินจากอีเมล
-    const sql = `SELECT id, email, password, name, role, status FROM admin WHERE email = ? LIMIT 1`;
-    const [rows]: any = await conn.query(sql, [email]);
+    // 2. ค้นหาแอดมินจาก username หรือ email
+    const sql = `SELECT id, username, email, password, name, role, status FROM admin WHERE username = ? OR email = ? LIMIT 1`;
+    const [rows]: any = await conn.query(sql, [loginIdentifier, loginIdentifier]);
 
     if (rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: "ไม่พบข้อมูลอีเมลนี้ในระบบ",
+        message: "ไม่พบข้อมูลชื่อผู้ใช้นี้ในระบบ",
       });
     }
 
@@ -136,13 +137,16 @@ export const adminLogin = async (
     // 4. สร้าง Token ให้แอดมินเอาไปใช้จัดการระบบ
     const secretKey = process.env.JWT_SECRET || "SIGNAL";
 
+    const adminUsername = admin.username || (admin.email?.includes("@") ? admin.email.split("@")[0] : admin.email) || "admin";
+    const adminEmail = admin.email || `${adminUsername}@school.internal`;
     const adminRole = admin.role || "admin";
     const adminName = admin.name || "ผู้ดูแลระบบ";
 
     const token = jwt.sign(
       {
         admin_id: admin.id,
-        email: admin.email,
+        username: adminUsername,
+        email: adminEmail,
         name: adminName,
         role: adminRole,
         status: admin.status || "active",
@@ -155,10 +159,11 @@ export const adminLogin = async (
     await logAdminActivity({
       adminId: admin.id,
       adminName: adminName,
-      adminEmail: admin.email,
+      adminUsername: adminUsername,
+      adminEmail: adminEmail,
       action: "LOGIN",
       category: "AUTH",
-      details: `เข้าสู่ระบบสำเร็จ (สิทธิ์: ${adminRole === "superadmin" ? "ผู้ดูแลระบบหลัก (Super Admin)" : "ผู้ดูแลระบบ (Admin)"})`,
+      details: `เข้าสู่ระบบสำเร็จ (ชื่อผู้ใช้: ${adminUsername}, สิทธิ์: ${adminRole === "superadmin" ? "ผู้ดูแลระบบหลัก (Super Admin)" : "ผู้ดูแลระบบ (Admin)"})`,
       req,
     });
 
@@ -168,7 +173,8 @@ export const adminLogin = async (
       token: token,
       adminData: {
         admin_id: admin.id,
-        email: admin.email,
+        username: adminUsername,
+        email: adminEmail,
         name: adminName,
         role: adminRole,
         status: admin.status || "active",
