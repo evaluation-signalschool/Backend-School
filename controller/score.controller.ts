@@ -816,7 +816,13 @@ export const getScoreSubmissions = async (
             FROM student_scores sc
             JOIN subject_batch_settings sbs ON sc.setting_id = sbs.id
             WHERE sbs.batch_id = sg.batch_id AND sbs.subject_id = sub.id
-        ) > 0 AS has_scores_in_db
+        ) > 0 AS has_scores_in_db,
+        (
+            SELECT MAX(sc.updated_at)
+            FROM student_scores sc
+            JOIN subject_batch_settings sbs ON sc.setting_id = sbs.id
+            WHERE sbs.batch_id = sg.batch_id AND sbs.subject_id = sub.id
+        ) AS last_score_date
       FROM subjects sub
       JOIN subject_groups sg ON sub.group_id = sg.id
       LEFT JOIN subject_score_submissions sss 
