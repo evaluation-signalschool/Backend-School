@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { conn } from "../dbconn";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { logAdminActivity } from "../utils/activityLogger";
 
 // 1. ดึงประวัติกิจกรรม (Activity & Audit Logs) พร้อมระบบค้นหาและแบ่งหน้า
 export const getActivityLogs = async (
@@ -147,6 +148,63 @@ export const getTodayLogStats = async (
     return res.status(500).json({
       success: false,
       message: "เกิดข้อผิดพลาดในการดึงสถิติภาพรวมวันนี้",
+    });
+  }
+};
+
+// 3. ล้างประวัติกิจกรรมที่เก่ากว่าระยะเวลาที่กำหนด (เช่น 1 ปี)
+export const cleanupOldLogs = async (
+  req: AuthRequest,
+  res: Response
+): Promise<Response> => {
+  try {
+    const days = parseInt(req.body?.days || (req.query?.["days"] as string) || "365", 10);
+    const validDays = isNaN(days) || days < 30 ? 365 : days;
+    const currentUser = req.user;
+
+    // 1. ตรวจสอบจำนวนรายการที่จะถูกลบ
+    const [countRows]: any = await conn.query(
+      `SELECT COUNT(*) as deleteCount FROM admin_activity_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [validDays]
+    );
+    const deleteCount = countRows[0]?.deleteCount || 0;
+
+    if (deleteCount === 0) {
+      return res.status(200).json({
+        success: true,
+        message: `ไม่พบประวัติกิจกรรมที่เก่ากว่า ${validDays} วันในระบบ`,
+        deletedCount: 0,
+      });
+    }
+
+    // 2. ลบประวัติกิจกรรม
+    await conn.query(
+      `DELETE FROM admin_activity_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [validDays]
+    );
+
+    // 3. บันทึก Activity Log สำหรับการล้างประวัติ
+    await logAdminActivity({
+      adminId: currentUser?.admin_id || 0,
+      adminName: currentUser?.name || "ผู้ดูแลระบบหลัก",
+      adminUsername: currentUser?.username || currentUser?.email || "-",
+      adminEmail: currentUser?.email || currentUser?.username || "-",
+      action: "CLEANUP_LOGS",
+      category: "ADMIN",
+      details: `ล้างประวัติกิจกรรมที่เก่ากว่า ${validDays} วัน (ลบออกทั้งหมด ${deleteCount} รายการ)`,
+      req,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `ล้างประวัติกิจกรรมที่เก่ากว่า ${validDays} วันเรียบร้อยแล้ว (ลบ ${deleteCount} รายการ)`,
+      deletedCount: deleteCount,
+    });
+  } catch (error: any) {
+    console.error("Cleanup Old Logs Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการล้างประวัติกิจกรรมเก่า",
     });
   }
 };
