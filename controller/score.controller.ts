@@ -639,6 +639,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
 
     // 4. ตัดเกรดและคำนวณ GPA
     const data = Object.values(studentsMap).map((student: any) => {
+      student.total_raw_score = Number(Number(student.total_raw_score || 0).toFixed(4));
       student.total_max_score = totalMaxScoreAll;
       student.percent =
         totalMaxScoreAll > 0
