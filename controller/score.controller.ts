@@ -679,6 +679,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
             const indexValue = grp.credit * gradePoint;
             student.group_results[grp.groupId] = {
               grade: assignedGrade.grade_name,
+              grade_point: gradePoint,
               index_value: indexValue.toFixed(2),
               raw_score: rawScore,
             };

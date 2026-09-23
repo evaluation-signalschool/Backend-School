@@ -18,8 +18,8 @@ export const getAllAdmins = async (
 
     const formattedAdmins = rows.map((a: any) => ({
       ...a,
-      username: a.username || (a.email?.includes("@") ? a.email.split("@")[0] : a.email) || "admin",
-      email: a.email || a.username,
+      username: a.username || "admin",
+      email: a.email || null,
     }));
 
     return res.status(200).json({
@@ -40,11 +40,11 @@ export const createAdmin = async (
   req: AuthRequest,
   res: Response
 ): Promise<Response> => {
-  const { username, email, password, name, role } = req.body;
+  const { username, password, name, role } = req.body;
   const currentUser = req.user;
 
   try {
-    const targetUsername = (username || email || "").trim();
+    const targetUsername = (username || "").trim();
 
     // ตรวจสอบข้อมูลบังคับ
     if (!targetUsername || !password || !name) {
@@ -64,12 +64,11 @@ export const createAdmin = async (
 
     const trimmedUsername = targetUsername.toLowerCase();
     const assignedRole = role === "superadmin" ? "superadmin" : "admin";
-    const assignedEmail = (email || (trimmedUsername.includes("@") ? trimmedUsername : `${trimmedUsername}@school.internal`)).trim().toLowerCase();
 
     // ตรวจสอบว่ามีชื่อผู้ใช้นี้ในระบบแล้วหรือไม่
     const [existing]: any = await conn.query(
-      "SELECT id FROM admin WHERE username = ? OR email = ? LIMIT 1",
-      [trimmedUsername, assignedEmail]
+      "SELECT id FROM admin WHERE username = ? LIMIT 1",
+      [trimmedUsername]
     );
 
     if (existing.length > 0) {
@@ -83,16 +82,15 @@ export const createAdmin = async (
     const hashedPassword = await bcrypt.hash(password.trim(), 10);
 
     const [result]: any = await conn.query(
-      "INSERT INTO admin (username, email, password, name, role, status) VALUES (?, ?, ?, ?, ?, 'active')",
-      [trimmedUsername, assignedEmail, hashedPassword, name.trim(), assignedRole]
+      "INSERT INTO admin (username, password, name, role, status, email) VALUES (?, ?, ?, ?, 'active', NULL)",
+      [trimmedUsername, hashedPassword, name.trim(), assignedRole]
     );
 
     // บันทึก Log กิจกรรม
     await logAdminActivity({
       adminId: currentUser?.admin_id || 0,
       adminName: currentUser?.name || "ผู้ดูแลระบบหลัก",
-      adminUsername: currentUser?.username || currentUser?.email || "-",
-      adminEmail: currentUser?.email || currentUser?.username || "-",
+      adminUsername: currentUser?.username || "-",
       action: "CREATE_ADMIN",
       category: "ADMIN",
       details: `เพิ่มผู้ดูแลระบบใหม่: ${name.trim()} (ชื่อผู้ใช้: ${trimmedUsername}) บทบาท: ${assignedRole === "superadmin" ? "Super Admin" : "Admin"}`,

@@ -137,8 +137,7 @@ export const adminLogin = async (
     // 4. สร้าง Token ให้แอดมินเอาไปใช้จัดการระบบ
     const secretKey = process.env.JWT_SECRET || "SIGNAL";
 
-    const adminUsername = admin.username || (admin.email?.includes("@") ? admin.email.split("@")[0] : admin.email) || "admin";
-    const adminEmail = admin.email || `${adminUsername}@school.internal`;
+    const adminUsername = admin.username || "admin";
     const adminRole = admin.role || "admin";
     const adminName = admin.name || "ผู้ดูแลระบบ";
 
@@ -146,7 +145,6 @@ export const adminLogin = async (
       {
         admin_id: admin.id,
         username: adminUsername,
-        email: adminEmail,
         name: adminName,
         role: adminRole,
         status: admin.status || "active",
@@ -160,7 +158,6 @@ export const adminLogin = async (
       adminId: admin.id,
       adminName: adminName,
       adminUsername: adminUsername,
-      adminEmail: adminEmail,
       action: "LOGIN",
       category: "AUTH",
       details: `เข้าสู่ระบบสำเร็จ (ชื่อผู้ใช้: ${adminUsername}, สิทธิ์: ${adminRole === "superadmin" ? "ผู้ดูแลระบบหลัก (Super Admin)" : "ผู้ดูแลระบบ (Admin)"})`,
@@ -174,7 +171,6 @@ export const adminLogin = async (
       adminData: {
         admin_id: admin.id,
         username: adminUsername,
-        email: adminEmail,
         name: adminName,
         role: adminRole,
         status: admin.status || "active",

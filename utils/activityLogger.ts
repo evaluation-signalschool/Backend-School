@@ -33,8 +33,8 @@ export const logAdminActivity = async (params: ActivityLogParams): Promise<void>
   try {
     const ip = params.ipAddress || getClientIp(params.req);
     const adminName = params.adminName || "ผู้ดูแลระบบ";
-    const adminUsername = params.adminUsername || (params.adminEmail?.includes("@") ? params.adminEmail.split("@")[0] : params.adminEmail) || "-";
-    const adminEmail = params.adminEmail || params.adminUsername || "-";
+    const adminUsername = params.adminUsername || "-";
+    const adminEmail = params.adminEmail || null;
 
     try {
       await conn.query(

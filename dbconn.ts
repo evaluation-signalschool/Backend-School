@@ -67,12 +67,20 @@ export const checkConnection = async () => {
       await conn.query(`ALTER TABLE admin ADD COLUMN username VARCHAR(255) NULL`);
     } catch (_) {}
     try {
-      await conn.query(`ALTER TABLE admin ADD COLUMN email VARCHAR(255) NULL`);
+      await conn.query(`ALTER TABLE admin MODIFY COLUMN email VARCHAR(255) NULL DEFAULT NULL`);
     } catch (_) {}
     try {
-      await conn.query(`UPDATE admin SET username = 'admin' WHERE (username IS NULL OR username = '') AND (email = 'admin@gmail.com' OR email IS NULL)`);
-      await conn.query(`UPDATE admin SET username = SUBSTRING_INDEX(email, '@', 1) WHERE (username IS NULL OR username = '') AND email IS NOT NULL`);
-      await conn.query(`UPDATE admin SET email = CONCAT(username, '@school.internal') WHERE (email IS NULL OR email = '') AND username IS NOT NULL`);
+      await conn.query(`ALTER TABLE admin DROP INDEX email`);
+    } catch (_) {}
+    try {
+      await conn.query(`UPDATE admin SET username = 'admin' WHERE id = 1 AND (username IS NULL OR username = '')`);
+      await conn.query(`UPDATE admin SET email = NULL WHERE email LIKE '%@school.internal' OR email = 'admin@gmail.com'`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE admin MODIFY COLUMN username VARCHAR(255) NOT NULL`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE admin ADD UNIQUE KEY uq_admin_username (username)`);
     } catch (_) {}
 
     try {
@@ -94,7 +102,7 @@ export const checkConnection = async () => {
         admin_id INT NOT NULL,
         admin_name VARCHAR(255) NOT NULL,
         admin_username VARCHAR(255) NULL,
-        admin_email VARCHAR(255) NOT NULL,
+        admin_email VARCHAR(255) NULL,
         action VARCHAR(100) NOT NULL,
         action_category VARCHAR(50) NOT NULL,
         details TEXT NOT NULL,
@@ -110,7 +118,11 @@ export const checkConnection = async () => {
       await conn.query(`ALTER TABLE admin_activity_logs ADD COLUMN admin_username VARCHAR(255) NULL`);
     } catch (_) {}
     try {
-      await conn.query(`UPDATE admin_activity_logs SET admin_username = SUBSTRING_INDEX(admin_email, '@', 1) WHERE (admin_username IS NULL OR admin_username = '') AND admin_email IS NOT NULL`);
+      await conn.query(`ALTER TABLE admin_activity_logs MODIFY COLUMN admin_email VARCHAR(255) NULL DEFAULT NULL`);
+    } catch (_) {}
+    try {
+      await conn.query(`UPDATE admin_activity_logs SET admin_username = SUBSTRING_INDEX(admin_username, '@', 1) WHERE admin_username LIKE '%@%'`);
+      await conn.query(`UPDATE admin_activity_logs SET admin_email = NULL WHERE admin_email LIKE '%@school.internal' OR admin_email = 'admin@gmail.com'`);
     } catch (_) {}
 
     console.log("Required tables checked/created.");
