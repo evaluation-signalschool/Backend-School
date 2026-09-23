@@ -5,12 +5,13 @@ import { verifyAdmin } from "../middleware/auth.middleware";
 
 const router = Router();
 
-// 🛡️ ป้องกัน Brute Force Attack: จำกัดการพยายามล็อกอินไม่เกิน 10 ครั้งต่อ 15 นาที สำหรับ 1 IP
+// 🛡️ ป้องกัน Brute Force Attack: จำกัดการพยายามล็อกอินไม่เกิน 50 ครั้งต่อ 15 นาที สำหรับ 1 IP
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 นาที
-  max: 10, // จำกัดสูงสุด 10 ครั้งต่อ IP ต่อ 15 นาที
+  max: 50, // จำกัดสูงสุด 50 ครั้งต่อ IP ต่อ 15 นาที
   standardHeaders: true, // คืนค่า RateLimit-* headers ตามมาตรฐาน IETF
   legacyHeaders: false, // ปิดการใช้ X-RateLimit-* headers เก่า
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     message: "คุณพยายามเข้าสู่ระบบบ่อยเกินไป กรุณารอ 15 นาทีแล้วลองใหม่อีกครั้ง",

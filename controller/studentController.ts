@@ -369,6 +369,12 @@ export const deleteStudent = async (
     const studentInfo = studentRows[0];
     const batch_id = studentInfo.batch_id;
 
+    // ลบข้อมูลที่ผูกกับนักเรียนก่อน (คำขอแก้ไขข้อมูล, แบบประเมินที่เคยส่ง, คะแนน) ป้องกัน Foreign Key Constraint
+    await connection.execute(`DELETE FROM profile_edit_requests WHERE student_id = ?`, [id]);
+    await connection.execute(`DELETE FROM evaluation_submissions WHERE student_id = ?`, [id]);
+    await connection.execute(`DELETE FROM student_scores WHERE student_id = ?`, [id]);
+    await connection.execute(`DELETE FROM student_summary_scores WHERE student_id = ?`, [id]);
+
     // ลบนักเรียน
     await connection.execute(`DELETE FROM students WHERE id = ?`, [id]);
 

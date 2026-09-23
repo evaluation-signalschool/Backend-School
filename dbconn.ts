@@ -125,6 +125,13 @@ export const checkConnection = async () => {
       await conn.query(`UPDATE admin_activity_logs SET admin_email = NULL WHERE admin_email LIKE '%@school.internal' OR admin_email = 'admin@gmail.com'`);
     } catch (_) {}
 
+    try {
+      await conn.query(`ALTER TABLE profile_edit_requests DROP FOREIGN KEY profile_edit_requests_ibfk_1`);
+    } catch (_) {}
+    try {
+      await conn.query(`ALTER TABLE profile_edit_requests ADD CONSTRAINT profile_edit_requests_ibfk_1 FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE`);
+    } catch (_) {}
+
     console.log("Required tables checked/created.");
   } catch (error) {
     console.error("Error creating tables:", error);

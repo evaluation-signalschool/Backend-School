@@ -13,6 +13,9 @@ import adminUserRoutes from "./routes/admin-user.route";
 import adminLogRoutes from "./routes/admin-log.route";
 const app = express();
 
+// ตั้งค่า trust proxy เพื่อให้ express-rate-limit ใช้งานบน Render / Reverse Proxy ได้ถูกต้อง
+app.set("trust proxy", 1);
+
 // 2. เรียกใช้ middleware cors ก่อนที่จะเรียก routes
 // (อนุญาตให้ทุกโดเมนสามารถเรียก API นี้ได้)
 app.use(cors());
