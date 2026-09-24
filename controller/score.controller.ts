@@ -887,6 +887,38 @@ export const getScoreSubmissions = async (
 
     const [rows]: any = await conn.query(sql, [batchId, batchId]);
 
+    // จัดเรียงตามกลุ่มวิชา (วิชาหลัก M -> วิชารอง MN -> วิชาประกอบ S -> ภาคปฏิบัติ P)
+    const getGroupPrefixOrder = (name: string): number => {
+      const upper = (name || '').trim().toUpperCase();
+      if (upper.startsWith('MN') || upper.includes('รอง')) return 2;
+      if (upper.startsWith('M') || upper.includes('หลัก')) return 1;
+      if (upper.startsWith('S') || upper.includes('ประกอบ')) return 3;
+      if (upper.startsWith('P') || upper.includes('ปฏิบัติ')) return 4;
+      return 5;
+    };
+
+    const compareGroupNames = (aName: string, bName: string): number => {
+      const a = (aName || '').trim();
+      const b = (bName || '').trim();
+      const orderA = getGroupPrefixOrder(a);
+      const orderB = getGroupPrefixOrder(b);
+      if (orderA !== orderB) return orderA - orderB;
+      const matchA = a.match(/\d+/);
+      const matchB = b.match(/\d+/);
+      if (matchA && matchB) {
+        const numA = parseInt(matchA[0], 10);
+        const numB = parseInt(matchB[0], 10);
+        if (numA !== numB) return numA - numB;
+      }
+      return a.localeCompare(b, 'th', { numeric: true, sensitivity: 'base' });
+    };
+
+    rows.sort((a: any, b: any) => {
+      const groupComp = compareGroupNames(a.group_name || '', b.group_name || '');
+      if (groupComp !== 0) return groupComp;
+      return (a.subject_id || 0) - (b.subject_id || 0);
+    });
+
     res.status(200).json({
       success: true,
       data: rows,
@@ -1010,7 +1042,7 @@ export const getBatchRanking = async (
     // 2. ดึงข้อมูลนักเรียนและคะแนนทุกวิชา
     const query = `
       SELECT 
-        st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
+        st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name, st.affiliation,
         sub.id AS subject_id, sub.subject_name,
         sub.group_id, 
         sg.group_name, 
@@ -1088,6 +1120,7 @@ export const getBatchRanking = async (
           rank_name: row.rank_name || "",
           first_name: row.first_name || "",
           last_name: row.last_name || "",
+          affiliation: row.affiliation || "",
           full_name: `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
           total_raw_score: 0,
           total_max_score: 0,
