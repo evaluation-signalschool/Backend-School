@@ -9,7 +9,8 @@ import {
   updateSubjectMaxScore,
   getScoreSubmissions,
   saveScoreSubmissions,
-  getBatchRanking
+  getBatchRanking,
+  getBatchSummaryScores
 } from "../controller/score.controller";
 import { verifyToken, verifyAdmin } from "../middleware/auth.middleware";
 
@@ -23,6 +24,7 @@ router.get("/score/process-group", verifyAdmin, processGroupGrades);
 router.get("/score/process-batch", verifyAdmin, getscore);
 router.get("/score/ranking", verifyAdmin, getBatchRanking);
 router.post("/score/ranking", verifyAdmin, getBatchRanking);
+router.get("/scores/summary-scores", verifyAdmin, getBatchSummaryScores);
 router.post("/scores/special-bulk", verifyAdmin, saveBatchScores);
 
 // Score Submissions Status

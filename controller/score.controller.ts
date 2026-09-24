@@ -722,6 +722,54 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลข้อมูล" });
   }
 };
+export const getBatchSummaryScores = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const batchId = req.query.batch_id;
+
+  if (!batchId) {
+    res.status(400).json({
+      success: false,
+      message: "กรุณาระบุ batch_id",
+    });
+    return;
+  }
+
+  try {
+    const query = `
+      SELECT 
+        st.id AS student_id,
+        st.student_code,
+        st.rank_name,
+        st.first_name,
+        st.last_name,
+        st.affiliation,
+        sss.training_time_score,
+        sss.exam_time_score,
+        sss.behavior_score
+      FROM students st
+      LEFT JOIN student_summary_scores sss ON st.id = sss.student_id AND st.batch_id = sss.batch_id
+      WHERE st.batch_id = ?
+      ORDER BY CAST(st.student_code AS UNSIGNED) ASC, st.id ASC
+    `;
+
+    const [rows]: any = await conn.query(query, [batchId]);
+
+    res.status(200).json({
+      success: true,
+      data: rows,
+    });
+  } catch (error: any) {
+    console.error("Error getBatchSummaryScores:", error);
+    res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการดึงข้อมูลคะแนนสรุป",
+      error: error.message,
+    });
+  }
+};
+
 export const saveBatchScores = async (
   req: Request,
   res: Response,
@@ -747,28 +795,33 @@ export const saveBatchScores = async (
     }
 
     // --- เตรียมข้อมูลสำหรับ Bulk Insert ---
-    // ใส่ type ให้ student เพื่อป้องกัน TS Error
+    // หากฟิลด์ใดไม่ได้ส่งมา (undefined) ให้เป็น null เพื่อไม่ให้เขียนทับค่าเดิมใน DB ผ่าน COALESCE
     const values = scores.map((student: any) => [
       batch_id,
       student.student_id,
-      student.training_time_score || 0,
-      student.exam_time_score || 0,
-      student.behavior_score || 0,
+      student.training_time_score !== undefined && student.training_time_score !== null && student.training_time_score !== ""
+        ? Number(student.training_time_score)
+        : null,
+      student.exam_time_score !== undefined && student.exam_time_score !== null && student.exam_time_score !== ""
+        ? Number(student.exam_time_score)
+        : null,
+      student.behavior_score !== undefined && student.behavior_score !== null && student.behavior_score !== ""
+        ? Number(student.behavior_score)
+        : null,
     ]);
 
-    // --- คำสั่ง SQL (Upsert) ---
+    // --- คำสั่ง SQL (Upsert โดยใช้ COALESCE เพื่อรักษาค่าฟิลด์เดิมไว้หากไม่ได้ส่งฟิลด์นั้นมา) ---
     const sql = `
             INSERT INTO student_summary_scores 
             (batch_id, student_id, training_time_score, exam_time_score, behavior_score)
             VALUES ?
             ON DUPLICATE KEY UPDATE 
-            training_time_score = VALUES(training_time_score),
-            exam_time_score = VALUES(exam_time_score),
-            behavior_score = VALUES(behavior_score)
+            training_time_score = COALESCE(VALUES(training_time_score), student_summary_scores.training_time_score, 100),
+            exam_time_score = COALESCE(VALUES(exam_time_score), student_summary_scores.exam_time_score, 100),
+            behavior_score = COALESCE(VALUES(behavior_score), student_summary_scores.behavior_score, 200)
         `;
 
     // --- สั่งรัน Query ---
-    // กำหนด Type เป็น : any ให้ผลลัพธ์เพื่ออ่านค่า affectedRows ได้
     const [result]: any = await conn.query(sql, [values]);
 
     // ส่ง Response
@@ -778,7 +831,6 @@ export const saveBatchScores = async (
       affectedRows: result.affectedRows,
     });
   } catch (error: any) {
-    // ใช้ any เพื่อให้อ่าน error.message ได้
     console.error("Error saving scores:", error);
     res.status(500).json({
       success: false,
