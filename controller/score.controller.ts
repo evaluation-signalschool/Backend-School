@@ -1490,16 +1490,34 @@ export const getUnitSelectionRanking = async (
       }
     });
 
-    const subjectGroups = Object.values(groupsMap).map((grp: any) => ({
-      ...grp,
-      group_max_score_formatted: Number(grp.group_max_score || 0).toFixed(4),
-      isMerged: grp.subjects.length > 1,
-      displayName:
-        grp.subjects.length === 1
-          ? `${grp.subjects[0].name} (${grp.credit} นก.)`
-          : `${grp.groupName} (${grp.credit} นก.)`,
-      subjectsCount: grp.subjects.length,
-    }));
+    const subjectGroups = Object.values(groupsMap).map((grp: any) => {
+      const maxScore = Number(grp.group_max_score || 0);
+      const credit = Number(grp.credit || 0);
+      const maxWeighted = maxScore * credit;
+      const isMerged = grp.subjects.length > 1;
+      const subjectNames = grp.subjects.map((s: any) => s.name).join(" + ");
+      const fullName = isMerged
+        ? `${grp.groupName} ${subjectNames}`
+        : `${grp.groupName} ${grp.subjects[0]?.name || ""}`.trim();
+
+      return {
+        ...grp,
+        group_max_score: maxScore,
+        group_max_score_formatted: maxScore.toFixed(4),
+        group_max_weighted: maxWeighted,
+        group_max_weighted_formatted: maxWeighted.toFixed(4),
+        isMerged: isMerged,
+        subjectNames: subjectNames,
+        fullName: fullName,
+        displayName: `${fullName} (${credit} นก.)`,
+        subjectsCount: grp.subjects.length,
+      };
+    });
+
+    // เรียงวิชาจากวิชาแรกไปวิชาท้ายสุด (เช่น M01, M02, ..., M21) ตามลำดับธรรมชาติ
+    subjectGroups.sort((a: any, b: any) => {
+      return a.groupName.localeCompare(b.groupName, undefined, { numeric: true, sensitivity: 'base' });
+    });
 
     // คำนวณคะแนนเต็มรวมคูณหน่วยกิต (total_max_weighted)
     let totalMaxWeighted = 0;
@@ -1507,7 +1525,7 @@ export const getUnitSelectionRanking = async (
 
     subjectGroups.forEach((grp: any) => {
       if (grp.credit > 0 && !grp.is_su) {
-        totalMaxWeighted += grp.group_max_score * grp.credit;
+        totalMaxWeighted += grp.group_max_weighted;
         totalCredit += grp.credit;
       }
     });
@@ -1529,6 +1547,8 @@ export const getUnitSelectionRanking = async (
         const rawScore = Number(st.group_raw_scores[grp.groupId]) || 0;
         const credit = grp.credit;
         const weightedScore = rawScore * credit;
+        const maxScore = Number(grp.group_max_score) || 0;
+        const maxWeightedScore = Number(grp.group_max_weighted) || (maxScore * credit);
 
         if (credit > 0 && !grp.is_su) {
           totalWeightedScore += weightedScore;
@@ -1537,31 +1557,28 @@ export const getUnitSelectionRanking = async (
         groupScores[grp.groupId] = {
           groupId: grp.groupId,
           groupName: grp.groupName,
-          max_score: grp.group_max_score,
-          max_score_formatted: Number(grp.group_max_score || 0).toFixed(4),
+          max_score: maxScore,
+          max_score_formatted: maxScore.toFixed(4),
           raw_score: rawScore,
           raw_score_formatted: rawScore.toFixed(4),
           credit: credit,
+          credit_formatted: Number(credit).toFixed(2),
           weighted_score: weightedScore,
           weighted_score_formatted: weightedScore.toFixed(4),
+          max_weighted_score: maxWeightedScore,
+          max_weighted_score_formatted: maxWeightedScore.toFixed(4),
         };
       });
 
       const behaviorScore = Number(st.behavior_score) || 0;
 
-      // คิดเป็นร้อยละ 80
-      const academicScore80 =
-        totalMaxWeighted > 0
-          ? (totalWeightedScore / totalMaxWeighted) * 80
-          : 0;
+      // ช่อง 80% ของคะแนนรวม: เอาคะแนนรวมทั้งหมดคูณ 0.80 โดยตรง
+      const academicScore80 = totalWeightedScore * 0.8;
 
-      // ความประพฤติคิดเป็นร้อยละ 20
-      const behaviorScore20 =
-        maxBehaviorScore > 0
-          ? (behaviorScore / maxBehaviorScore) * 20
-          : 0;
+      // ช่อง 20% ของคะแนนประพฤติ: เอาคะแนนความประพฤติคูณ 0.20 โดยตรง (เช่น 200 * 0.20 = 40.0000, 190 * 0.20 = 38.0000)
+      const behaviorScore20 = behaviorScore * 0.2;
 
-      // คะแนนรวมสุทธิ (ร้อยละ 80 + ร้อยละ 20)
+      // คะแนนรวมสุทธิ: (คะแนนรวมทั้งหมด * 0.80) + (คะแนนประพฤติ * 0.20)
       const finalScore = academicScore80 + behaviorScore20;
 
       return {
@@ -1602,6 +1619,10 @@ export const getUnitSelectionRanking = async (
       st.rank = idx + 1;
     });
 
+    const maxAcad80 = totalMaxWeighted * 0.8;
+    const maxBeh20 = maxBehaviorScore * 0.2;
+    const maxFinal = maxAcad80 + maxBeh20;
+
     res.json({
       success: true,
       data: processedStudents,
@@ -1612,7 +1633,14 @@ export const getUnitSelectionRanking = async (
         total_credit: totalCredit,
         total_max_weighted: totalMaxWeighted,
         total_max_weighted_formatted: totalMaxWeighted.toFixed(4),
+        max_academic_80: maxAcad80,
+        max_academic_80_formatted: maxAcad80.toFixed(4),
         max_behavior_score: maxBehaviorScore,
+        max_behavior_score_formatted: maxBehaviorScore.toFixed(4),
+        max_behavior_20: maxBeh20,
+        max_behavior_20_formatted: maxBeh20.toFixed(4),
+        max_final_score: maxFinal,
+        max_final_score_formatted: maxFinal.toFixed(4),
       },
     });
   } catch (error) {
