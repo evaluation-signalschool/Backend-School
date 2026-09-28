@@ -10,7 +10,8 @@ import {
   getScoreSubmissions,
   saveScoreSubmissions,
   getBatchRanking,
-  getBatchSummaryScores
+  getBatchSummaryScores,
+  getUnitSelectionRanking
 } from "../controller/score.controller";
 import { verifyToken, verifyAdmin } from "../middleware/auth.middleware";
 
@@ -24,6 +25,8 @@ router.get("/score/process-group", verifyAdmin, processGroupGrades);
 router.get("/score/process-batch", verifyAdmin, getscore);
 router.get("/score/ranking", verifyAdmin, getBatchRanking);
 router.post("/score/ranking", verifyAdmin, getBatchRanking);
+router.get("/score/unit-selection-ranking", verifyAdmin, getUnitSelectionRanking);
+router.post("/score/unit-selection-ranking", verifyAdmin, getUnitSelectionRanking);
 router.get("/scores/summary-scores", verifyAdmin, getBatchSummaryScores);
 router.post("/scores/special-bulk", verifyAdmin, saveBatchScores);
 

@@ -1002,6 +1002,11 @@ export const getBatchRanking = async (
       return;
     }
 
+    const mode = req.query.mode || req.body?.mode;
+    if (mode === 'unit_selection') {
+      return getUnitSelectionRanking(req, res);
+    }
+
     // วิชาที่แอดมินเลือกสำหรับตัดสิน Tie-Break
     let selectedSubIds: number[] = [];
     let hasExplicitSubjects = false;
@@ -1367,4 +1372,256 @@ export const getBatchRanking = async (
     res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ" });
   }
 };
+
+/**
+ * 🌟 คำนวณการจัดลำดับสำหรับการเลือกลงหน่วย (Unit Selection Ranking)
+ * สูตรการคำนวณ:
+ * 1. แต่ละกลุ่มวิชา/วิชา:
+ *    - คะแนนดิบ (raw_score) = ผลรวมคะแนนดิบของวิชาในกลุ่ม (กรณีวิชาที่เมิร์จกัน)
+ *    - คะแนนคูณหน่วยกิต (weighted_score) = คะแนนดิบ * หน่วยกิต
+ * 2. คะแนนรวมทั้งหมด (total_weighted_score) = ผลรวมของคะแนนคูณหน่วยกิตทุกวิชา
+ * 3. คะแนนความประพฤติ (behavior_score) ดึงมาจากตาราง student_summary_scores (ค่าเริ่มต้น 200)
+ * 4. คิดเป็นร้อยละ 80 (academic_score_80) = (คะแนนรวมทั้งหมด / คะแนนเต็มรวมคูณหน่วยกิต) * 80
+ * 5. คะแนนความประพฤติคิดเป็นร้อยละ 20 (behavior_score_20) = (คะแนนความประพฤติ / คะแนนเต็มความประพฤติ) * 20
+ * 6. คะแนนรวมสุทธิ (final_score) = ร้อยละ 80 + ร้อยละ 20
+ * 7. เรียงลำดับ (Rank 1 ถึง N) จากคะแนนรวมสุทธิ (final_score) จากมากไปน้อย
+ * 8. การคำนวณทั้งหมดทำที่แบ็กเอนด์ แสดงทศนิยม 4 ตำแหน่ง
+ */
+export const getUnitSelectionRanking = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const batchId = req.query.batch_id || req.body?.batch_id;
+    if (!batchId) {
+      res.status(400).json({ success: false, message: "กรุณาระบุ batch_id" });
+      return;
+    }
+
+    const query = `
+      SELECT 
+        st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name, st.affiliation,
+        sub.id AS subject_id, sub.subject_name,
+        sub.group_id, 
+        sg.group_name, 
+        sg.credits AS credit, 
+        sbs.max_score, 
+        sub.is_su,
+        sc.raw_score,
+        sss.training_time_score,
+        sss.exam_time_score,
+        sss.behavior_score
+      FROM students st
+      JOIN subject_batch_settings sbs ON st.batch_id = sbs.batch_id
+      JOIN subjects sub ON sbs.subject_id = sub.id
+      JOIN subject_groups sg ON sub.group_id = sg.id 
+      LEFT JOIN student_scores sc ON st.id = sc.student_id AND sbs.id = sc.setting_id 
+      LEFT JOIN student_summary_scores sss ON st.id = sss.student_id AND st.batch_id = sss.batch_id
+      WHERE st.batch_id = ?
+      ORDER BY st.student_code ASC, sub.group_id ASC, sub.id ASC
+    `;
+
+    const [rows]: any = await conn.query(query, [batchId]);
+
+    if (!rows || rows.length === 0) {
+      res.json({
+        success: true,
+        data: [],
+        subjectGroups: [],
+        summary: { total_students: 0 },
+      });
+      return;
+    }
+
+    // 1. จัดกลุ่มวิชา
+    const groupsMap: Record<number, any> = {};
+    const studentsMap: Record<number, any> = {};
+
+    rows.forEach((row: any) => {
+      // โครงสร้างกลุ่มวิชา
+      if (!groupsMap[row.group_id]) {
+        groupsMap[row.group_id] = {
+          groupId: row.group_id,
+          groupName: row.group_name || "",
+          credit: Number(row.credit) || 0,
+          subjects: [],
+          group_max_score: 0,
+          is_su: Boolean(row.is_su),
+        };
+      }
+      const grp = groupsMap[row.group_id];
+      if (!row.is_su) grp.is_su = false;
+
+      const subExists = grp.subjects.find((s: any) => s.id === row.subject_id);
+      if (!subExists) {
+        grp.subjects.push({
+          id: row.subject_id,
+          name: row.subject_name,
+          max_score: Number(row.max_score) || 0,
+          is_su: Boolean(row.is_su),
+        });
+        grp.group_max_score += Number(row.max_score) || 0;
+      }
+
+      // ข้อมูลนักเรียน
+      if (!studentsMap[row.student_id]) {
+        studentsMap[row.student_id] = {
+          student_id: row.student_id,
+          student_code: String(row.student_code || "").padStart(2, "0"),
+          rank_name: row.rank_name || "",
+          first_name: row.first_name || "",
+          last_name: row.last_name || "",
+          affiliation: row.affiliation || "",
+          full_name: `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
+          behavior_score:
+            row.behavior_score !== null && row.behavior_score !== undefined
+              ? Number(row.behavior_score)
+              : 200,
+          subject_raw_scores: {},
+          group_raw_scores: {},
+        };
+      }
+
+      const st = studentsMap[row.student_id];
+      if (row.raw_score !== null && row.raw_score !== undefined) {
+        const score = Number(row.raw_score);
+        st.subject_raw_scores[row.subject_id] = score;
+        st.group_raw_scores[row.group_id] = (st.group_raw_scores[row.group_id] || 0) + score;
+      }
+    });
+
+    const subjectGroups = Object.values(groupsMap).map((grp: any) => ({
+      ...grp,
+      group_max_score_formatted: Number(grp.group_max_score || 0).toFixed(4),
+      isMerged: grp.subjects.length > 1,
+      displayName:
+        grp.subjects.length === 1
+          ? `${grp.subjects[0].name} (${grp.credit} นก.)`
+          : `${grp.groupName} (${grp.credit} นก.)`,
+      subjectsCount: grp.subjects.length,
+    }));
+
+    // คำนวณคะแนนเต็มรวมคูณหน่วยกิต (total_max_weighted)
+    let totalMaxWeighted = 0;
+    let totalCredit = 0;
+
+    subjectGroups.forEach((grp: any) => {
+      if (grp.credit > 0 && !grp.is_su) {
+        totalMaxWeighted += grp.group_max_score * grp.credit;
+        totalCredit += grp.credit;
+      }
+    });
+
+    // ตรวจสอบคะแนนเต็มความประพฤติ (ปกติ 200)
+    let maxBehaviorScore = 200;
+    const allStudentsList = Object.values(studentsMap);
+    const hasScoreOver100 = allStudentsList.some((s: any) => s.behavior_score > 100);
+    if (!hasScoreOver100 && allStudentsList.length > 0) {
+      maxBehaviorScore = 100;
+    }
+
+    // 2. คำนวณคะแนนของนักเรียนแต่ละคนตามสูตร
+    const processedStudents = allStudentsList.map((st: any) => {
+      let totalWeightedScore = 0;
+      const groupScores: Record<number, any> = {};
+
+      subjectGroups.forEach((grp: any) => {
+        const rawScore = Number(st.group_raw_scores[grp.groupId]) || 0;
+        const credit = grp.credit;
+        const weightedScore = rawScore * credit;
+
+        if (credit > 0 && !grp.is_su) {
+          totalWeightedScore += weightedScore;
+        }
+
+        groupScores[grp.groupId] = {
+          groupId: grp.groupId,
+          groupName: grp.groupName,
+          max_score: grp.group_max_score,
+          max_score_formatted: Number(grp.group_max_score || 0).toFixed(4),
+          raw_score: rawScore,
+          raw_score_formatted: rawScore.toFixed(4),
+          credit: credit,
+          weighted_score: weightedScore,
+          weighted_score_formatted: weightedScore.toFixed(4),
+        };
+      });
+
+      const behaviorScore = Number(st.behavior_score) || 0;
+
+      // คิดเป็นร้อยละ 80
+      const academicScore80 =
+        totalMaxWeighted > 0
+          ? (totalWeightedScore / totalMaxWeighted) * 80
+          : 0;
+
+      // ความประพฤติคิดเป็นร้อยละ 20
+      const behaviorScore20 =
+        maxBehaviorScore > 0
+          ? (behaviorScore / maxBehaviorScore) * 20
+          : 0;
+
+      // คะแนนรวมสุทธิ (ร้อยละ 80 + ร้อยละ 20)
+      const finalScore = academicScore80 + behaviorScore20;
+
+      return {
+        student_id: st.student_id,
+        student_code: st.student_code,
+        rank_name: st.rank_name,
+        first_name: st.first_name,
+        last_name: st.last_name,
+        full_name: st.full_name,
+        affiliation: st.affiliation,
+        group_scores: groupScores,
+        total_weighted_score: totalWeightedScore,
+        total_weighted_score_formatted: totalWeightedScore.toFixed(4),
+        behavior_score: behaviorScore,
+        behavior_score_formatted: behaviorScore.toFixed(4),
+        academic_score_80: academicScore80,
+        academic_score_80_formatted: academicScore80.toFixed(4),
+        behavior_score_20: behaviorScore20,
+        behavior_score_20_formatted: behaviorScore20.toFixed(4),
+        final_score: finalScore,
+        final_score_formatted: finalScore.toFixed(4),
+        total_max_weighted: totalMaxWeighted,
+        max_behavior_score: maxBehaviorScore,
+      };
+    });
+
+    // 3. เรียงลำดับจากคะแนนรวมสุทธิ (final_score) มากไปหาน้อย
+    processedStudents.sort((a: any, b: any) => {
+      const diff = b.final_score - a.final_score;
+      if (Math.abs(diff) > 0.000001) return diff;
+      const wDiff = b.total_weighted_score - a.total_weighted_score;
+      if (Math.abs(wDiff) > 0.000001) return wDiff;
+      return b.behavior_score - a.behavior_score;
+    });
+
+    // กำหนด Rank 1 ถึง N
+    processedStudents.forEach((st: any, idx: number) => {
+      st.rank = idx + 1;
+    });
+
+    res.json({
+      success: true,
+      data: processedStudents,
+      subjectGroups: subjectGroups,
+      summary: {
+        batch_id: Number(batchId),
+        total_students: processedStudents.length,
+        total_credit: totalCredit,
+        total_max_weighted: totalMaxWeighted,
+        total_max_weighted_formatted: totalMaxWeighted.toFixed(4),
+        max_behavior_score: maxBehaviorScore,
+      },
+    });
+  } catch (error) {
+    console.error("Error calculating unit selection ranking:", error);
+    res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับสำหรับการเลือกลงหน่วย",
+    });
+  }
+};
+
 
