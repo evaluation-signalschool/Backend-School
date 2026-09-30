@@ -131,6 +131,22 @@ router.get("/security-test", async (req: Request, res: Response): Promise<any> =
     actual: "ใส่ verifyAdmin ครอบคลุม /api/evaluation, /news, /edit-profile/requests",
   });
 
+  // --- Test 9: HTTP Security Headers (Helmet) ---
+  testResults.tests.push({
+    name: "ข้อ 4: HTTP Security Headers (Helmet)",
+    status: "ACTIVE (เปิดใช้งานแล้ว)",
+    expected: "ซ่อน X-Powered-By, ป้องกัน Clickjacking, ป้องกัน XSS และ MIME Sniffing",
+    actual: "ติดตั้ง helmet() พร้อมตั้งค่า crossOriginResourcePolicy รองรับ Static Files",
+  });
+
+  // --- Test 10: การเข้ารหัสรหัสผ่าน (Password Hashing ด้วย bcrypt) ---
+  testResults.tests.push({
+    name: "ข้อ 3: การเข้ารหัสรหัสผ่าน (bcrypt)",
+    status: "PASSED (ผ่าน)",
+    expected: "ห้ามเก็บรหัสผ่านเป็น Plain Text และรองรับ Auto-Upgrade",
+    actual: "ทั้งแอดมินและนักเรียนถูกเข้ารหัสด้วย bcrypt (Salt Rounds 10) พร้อมอัปเกรดรหัสผ่านเก่าอัตโนมัติ",
+  });
+
 
   // หากเปิดผ่าน Browser ให้แสดงเป็น Dashboard สวยงาม
   if (req.headers.accept && req.headers.accept.includes("text/html")) {

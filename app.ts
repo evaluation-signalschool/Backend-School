@@ -12,6 +12,14 @@ import securityTestRoutes from "./routes/security-test.route";
 import adminUserRoutes from "./routes/admin-user.route";
 import adminLogRoutes from "./routes/admin-log.route";
 const app = express();
+import helmet from "helmet";
+
+// ตั้งค่า Helmet เสริมความปลอดภัย HTTP Headers (อนุญาต cross-origin สำหรับโหลดรูปภาพ/ไฟล์จาก uploads)
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 
 // ตั้งค่า trust proxy เพื่อให้ express-rate-limit ใช้งานบน Render / Reverse Proxy ได้ถูกต้อง
 app.set("trust proxy", 1);

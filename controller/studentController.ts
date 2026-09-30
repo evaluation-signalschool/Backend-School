@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import fs from "fs";
 import csv from "csv-parser";
 import "multer";
+import bcrypt from "bcrypt";
 import { conn } from "../dbconn";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { logAdminActivity } from "../utils/activityLogger";
@@ -43,7 +44,8 @@ export const uploadStudent = async (
           }
 
           const student_code: string = row["ลำดับ"];
-          const password: string = row["รหัสผ่าน"] || "1234";
+          const rawPassword: string = String(row["รหัสผ่าน"] || "1234").trim();
+          const hashedPassword: string = await bcrypt.hash(rawPassword, 10);
           const affiliation: string = row["สังกัด"] || "";
           
           // ดึงอีเมลและเบอร์โทรศัพท์จาก CSV (รองรับชื่อคอลัมน์หลายแบบ)
@@ -78,7 +80,7 @@ export const uploadStudent = async (
           await connection.execute(query, [
             batch_id,
             student_code,
-            password,
+            hashedPassword,
             rank_name,
             first_name,
             last_name,
@@ -199,13 +201,14 @@ export const addStudent = async (
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    // หากไม่ได้กรอกรหัสผ่าน ให้ตั้งค่าเริ่มต้นเป็น "1234" ตามที่เคยทำในอัปโหลด CSV
-    const defaultPassword = password || "1234";
+    // หากไม่ได้กรอกรหัสผ่าน ให้ตั้งค่าเริ่มต้นเป็น "1234" แล้วเข้ารหัสด้วย bcrypt
+    const rawPassword = String(password || "1234").trim();
+    const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
     await connection.execute(query, [
       batch_id,
       finalStudentCode,
-      defaultPassword,
+      hashedPassword,
       rank_name || "",
       first_name,
       last_name || "",
@@ -276,6 +279,18 @@ export const updateStudent = async (
   try {
     connection = await conn.getConnection();
 
+    // ตรวจสอบรหัสผ่าน หากมีการส่งมาให้เข้ารหัสด้วย bcrypt
+    let updatePasswordQuery = "";
+    let finalHashedPassword = "";
+    if (password && String(password).trim() !== "") {
+      const trimmed = String(password).trim();
+      finalHashedPassword =
+        trimmed.startsWith("$2a$") || trimmed.startsWith("$2b$")
+          ? trimmed
+          : await bcrypt.hash(trimmed, 10);
+      updatePasswordQuery = "password = ?,";
+    }
+
     const query = `
       UPDATE students 
       SET 
@@ -283,24 +298,30 @@ export const updateStudent = async (
         first_name = ?, 
         last_name = ?, 
         student_code = ?, 
-        password = ?, 
+        ${updatePasswordQuery}
         affiliation = ?,
         email = ?,
         phone = ?
       WHERE id = ?
     `;
 
-    const [result]: any = await connection.execute(query, [
+    const updateParams: any[] = [
       rank_name || "",
       first_name,
       last_name || "",
       student_code,
-      password,
+    ];
+    if (updatePasswordQuery) {
+      updateParams.push(finalHashedPassword);
+    }
+    updateParams.push(
       affiliation || "",
       email || "",
       phone || "",
       id,
-    ]);
+    );
+
+    const [result]: any = await connection.execute(query, updateParams);
 
     // เช็คว่ามีข้อมูลถูกอัปเดตจริงๆ หรือไม่
     if (result.affectedRows === 0) {

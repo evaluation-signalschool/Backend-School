@@ -23,14 +23,29 @@ export const studentLogin = async (
 
     const student = rows[0];
 
-    // 2. ตรวจสอบรหัสผ่าน (เลข 4 ตัวท้าย)
-    // กรณีไม่ได้เข้ารหัส (เก็บเป็น plain text)
-    // const isMatch = (password === student.password);
+    // 2. ตรวจสอบรหัสผ่าน (รองรับทั้ง bcrypt และ plain text พร้อม auto-upgrade)
+    let isMatch = false;
+    const isBcrypt =
+      typeof student.password === "string" &&
+      (student.password.startsWith("$2a$") || student.password.startsWith("$2b$"));
 
-    const isMatch = password === student.password;
-
-    // กรณีใช้ bcrypt เข้ารหัสไว้ (แนะนำ)
-    // const isMatch = await bcrypt.compare(password, student.password);
+    if (isBcrypt) {
+      isMatch = await bcrypt.compare(password, student.password);
+    } else {
+      isMatch = password === student.password;
+      // หากรหัสเดิมในฐานข้อมูลยังเป็น plain text และนักเรียนล็อกอินสำเร็จ ให้อัปเกรดเป็น bcrypt อัตโนมัติทันที
+      if (isMatch) {
+        try {
+          const hashedPassword = await bcrypt.hash(password, 10);
+          await conn.query("UPDATE students SET password = ? WHERE id = ?", [
+            hashedPassword,
+            student.id,
+          ]);
+        } catch (upgradeErr) {
+          console.error("Auto upgrade student password hash error:", upgradeErr);
+        }
+      }
+    }
 
     if (!isMatch) {
       return res.status(401).json({
