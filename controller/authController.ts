@@ -7,17 +7,33 @@ export const studentLogin = async (
   req: Request,
   res: Response,
 ): Promise<Response> => {
-  const { batch_id, student_code, password } = req.body;
+  const { batch_id, student_code, identifier, email, phone, password } = req.body;
+  const loginIdentifier = String(identifier || student_code || email || phone || "").trim();
 
   try {
-    // 1. ค้นหานักเรียนจากรหัสและรุ่น
-    const sql = `SELECT * FROM students WHERE student_code = ? AND batch_id = ? LIMIT 1`;
-    const [rows]: any = await conn.query(sql, [student_code, batch_id]);
+    if (!loginIdentifier || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณากรอกอีเมลและรหัสผ่านให้ครบถ้วน",
+      });
+    }
+
+    // 1. ค้นหานักเรียนจาก อีเมล (และ student_code / เบอร์โทร เป็น fallback)
+    let sql = `SELECT * FROM students WHERE (LOWER(email) = LOWER(?) OR student_code = ? OR phone = ?)`;
+    const params: any[] = [loginIdentifier, loginIdentifier, loginIdentifier];
+
+    if (batch_id) {
+      sql += ` AND batch_id = ?`;
+      params.push(batch_id);
+    }
+    sql += ` LIMIT 1`;
+
+    const [rows]: any = await conn.query(sql, params);
 
     if (rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: "ไม่พบข้อมูลนักเรียนในรุ่นนี้ หรือรหัสนักเรียนไม่ถูกต้อง",
+        message: "ไม่พบข้อมูลอีเมลนี้ในรุ่นดังกล่าว",
       });
     }
 
@@ -50,7 +66,7 @@ export const studentLogin = async (
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-        message: "รหัสผ่าน (เลข 4 ตัวท้ายบัตร ปชช.) ไม่ถูกต้อง",
+        message: "รหัสผ่านไม่ถูกต้อง",
       });
     }
 
@@ -63,7 +79,7 @@ export const studentLogin = async (
         student_code: student.student_code,
         batch_id: student.batch_id,
       },
-      secretKey, // เปลี่ยนมาใช้ตัวแปรนี้แทนการพิมพ์ข้อความตรงๆ
+      secretKey,
       { expiresIn: "2h" },
     );
 
@@ -72,11 +88,14 @@ export const studentLogin = async (
       message: "เข้าสู่ระบบสำเร็จ",
       token: token,
       studentData: {
-        student_id: student.id, // 👈 เพิ่มบรรทัดนี้ เพื่อให้ Frontend เอาไปยิง API เก็บคะแนนได้ทันที
+        student_id: student.id,
         batch_id: student.batch_id,
+        student_code: student.student_code,
         first_name: student.first_name,
         last_name: student.last_name,
         rank_name: student.rank_name,
+        email: student.email,
+        phone: student.phone,
       },
     });
   } catch (error: any) {

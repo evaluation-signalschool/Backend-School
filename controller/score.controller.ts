@@ -1428,7 +1428,21 @@ export const getUnitSelectionRanking = async (
         success: true,
         data: [],
         subjectGroups: [],
-        summary: { total_students: 0 },
+        summary: {
+          batch_id: Number(batchId),
+          total_students: 0,
+          total_credit: 0,
+          total_max_weighted: 0,
+          total_max_weighted_formatted: "0.0000",
+          max_academic_80: 0,
+          max_academic_80_formatted: "0.0000",
+          max_behavior_score: 0,
+          max_behavior_score_formatted: "0.0000",
+          max_behavior_20: 0,
+          max_behavior_20_formatted: "0.0000",
+          max_final_score: 0,
+          max_final_score_formatted: "0.0000",
+        },
       });
       return;
     }
