@@ -145,3 +145,30 @@ export const verifySuperAdmin = (
   }
 };
 
+// Middleware เสริม: ตรวจสอบ Admin แบบยืดหยุ่น (Optional)
+// - ถ้ามี Token แอดมิน: แนบ req.user เพื่อให้ระบบบันทึก Audit Log ได้
+// - ถ้าไม่มี Token: ปล่อยผ่านให้ทำงานได้ เช่น นักเรียนลงทะเบียนเรียนเอง
+export const optionalAdmin = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const decoded = jwt.verify(token, secretKey) as any;
+    if (decoded && (decoded.role === "admin" || decoded.role === "superadmin")) {
+      req.user = decoded;
+    }
+  } catch (error) {
+    // หาก token หมดอายุหรือผิดพลาด ปล่อยผ่านเป็น guest
+  }
+  next();
+};
+
