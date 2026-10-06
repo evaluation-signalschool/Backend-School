@@ -62,6 +62,11 @@ export const checkConnection = async () => {
       await conn.query(`ALTER TABLE evaluation_questions ADD COLUMN subject_for INT NULL`);
     } catch (_) {}
 
+    try {
+      await conn.query(`ALTER TABLE news MODIFY COLUMN file_url TEXT NULL`);
+      await conn.query(`ALTER TABLE news MODIFY COLUMN file_name VARCHAR(500) NULL`);
+    } catch (_) {}
+
     // ตรวจสอบขนาดคอลัมน์รหัสผ่านนักเรียน ให้รองรับรหัสผ่านที่เข้ารหัสด้วย bcrypt (60 ตัวอักษร)
     try {
       await conn.query(`ALTER TABLE students MODIFY COLUMN password VARCHAR(255) NULL`);

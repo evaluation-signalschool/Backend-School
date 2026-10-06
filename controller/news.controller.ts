@@ -51,17 +51,24 @@ export const getNews = async (_req: Request, res: Response): Promise<void> => {
   }
 };
 
-// ─── POST: เพิ่มข่าวสารใหม่ (พร้อมไฟล์แนบ) ──────────────
+// ─── POST: เพิ่มข่าวสารใหม่ (พร้อมไฟล์แนบ หรือ ลิงก์ Google Drive) ──────────────
 export const addNews = async (req: Request, res: Response): Promise<void> => {
   try {
     const { title, description, type, news_date } = req.body;
     const file = req.file;
-    let file_url = null;
-    let file_name = null;
+    let file_url = req.body.file_url ? String(req.body.file_url).trim() : null;
+    let file_name = req.body.file_name ? String(req.body.file_name).trim() : null;
 
     if (file) {
       file_url = await uploadToSupabase(file.buffer, file.originalname, file.mimetype);
       file_name = file.originalname;
+    } else if (file_url) {
+      if (!file_name) {
+        file_name = "เอกสารแนบ (Google Drive)";
+      }
+    } else {
+      file_url = null;
+      file_name = null;
     }
 
     await conn.query(
@@ -135,8 +142,8 @@ export const updateNews = async (req: Request, res: Response): Promise<void> => 
   try {
     const { id } = req.params;
     const { title, description, type, news_date } = req.body;
-    let fileUrl: string | undefined = undefined;
-    let fileName: string | undefined = undefined;
+    let fileUrl: string | null | undefined = req.body.file_url !== undefined ? (req.body.file_url ? String(req.body.file_url).trim() : null) : undefined;
+    let fileName: string | null | undefined = req.body.file_name !== undefined ? (req.body.file_name ? String(req.body.file_name).trim() : null) : undefined;
 
     if (req.file) {
       // อัปโหลดไฟล์ใหม่ขึ้น Supabase
@@ -152,12 +159,18 @@ export const updateNews = async (req: Request, res: Response): Promise<void> => 
           if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         }
       }
+    } else if (fileUrl !== undefined) {
+      if (fileUrl) {
+        fileName = fileName ? fileName : "เอกสารแนบ (Google Drive)";
+      } else {
+        fileName = null;
+      }
     }
 
     let query = "UPDATE news SET title = ?, description = ?, type = ?, news_date = ?";
     const values: any[] = [title, description, type, news_date || null];
 
-    if (fileUrl && fileName) {
+    if (fileUrl !== undefined) {
       query += ", file_url = ?, file_name = ?";
       values.push(fileUrl, fileName);
     }

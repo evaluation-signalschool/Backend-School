@@ -470,6 +470,17 @@ export const submitEvaluationAnswer = async (
       });
   }
 
+  // 🛡️ ป้องกัน XSS: ตรวจจับสคริปต์อันตรายในคำตอบ
+  const xssPattern = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>|<[^>]*script|javascript:|onerror\s*=|onload\s*|<iframe|<embed|<object/i;
+  for (let ans of answers) {
+    if (ans.comment && xssPattern.test(String(ans.comment))) {
+      return res.status(400).json({
+        success: false,
+        message: "ส่งไม่สำเร็จ: กรอกสคริปต์อันตราย (Security)",
+      });
+    }
+  }
+
   const connection = await conn.getConnection();
   try {
     await connection.beginTransaction();
@@ -506,12 +517,20 @@ export const submitEvaluationAnswer = async (
         INSERT INTO evaluation_answers (submission_id, question_id, score_value, comment)
         VALUES (?, ?, ?, ?)
       `;
+      // ล้างแท็ก HTML และ Script ออก เพื่อป้องกัน XSS อย่างเด็ดขาด
+      const cleanComment = ans.comment
+        ? String(ans.comment)
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+            .replace(/<[^>]+>/g, "")
+            .trim()
+        : null;
+
       // ถ้าเป็นคำถามแบบ text จะไม่มีคะแนน (score_value = null) และไปใส่ช่อง comment แทน
       await connection.query(sqlAnswer, [
         submissionId,
         ans.question_id,
         ans.score_value || null,
-        ans.comment || null,
+        cleanComment,
       ]);
     }
 
@@ -607,8 +626,15 @@ export const getFormSubmissions = async (
       
       const answerDict: any = {};
       for (const ans of userAnswers) {
+        // ล้างแท็กและสคริปต์เพื่อความปลอดภัยต่อ XSS ก่อนส่งไปให้ Frontend แสดงผล
+        const safeComment = ans.comment
+          ? String(ans.comment)
+              .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+              .replace(/<[^>]+>/g, "")
+              .trim()
+          : null;
         // ให้ค่าคะแนนเป็นหลัก ถ้าไม่มีคะแนนให้แสดง comment (สำหรับ text type)
-        answerDict[`q_${ans.question_id}`] = ans.score_value !== null ? ans.score_value : (ans.comment || '-');
+        answerDict[`q_${ans.question_id}`] = ans.score_value !== null ? ans.score_value : (safeComment || '-');
       }
 
       return {

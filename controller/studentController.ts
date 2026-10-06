@@ -181,6 +181,31 @@ export const addStudent = async (
     });
   }
 
+  // 🛡️ ตรวจสอบความถูกต้องของยศ: ห้ามมีตัวเลข หรือเครื่องหมาย @
+  if (rank_name && (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))) {
+    return res.status(400).json({
+      message: "ช่องยศต้องไม่มีตัวเลขหรือเครื่องหมาย @",
+    });
+  }
+
+  // 🛡️ ตรวจสอบชื่อและนามสกุล: ห้ามมีตัวเลข หรือสัญลักษณ์ @
+  if (
+    /[0-9\u0E50-\u0E59]/.test(first_name) ||
+    first_name.includes("@") ||
+    (last_name && (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
+  ) {
+    return res.status(400).json({
+      message: "ชื่อและนามสกุลต้องไม่มีตัวเลขหรือสัญลักษณ์พิเศษ",
+    });
+  }
+
+  // 🛡️ ตรวจสอบรหัสผ่าน: ห้ามมีช่องว่าง/เว้นวรรค
+  if (password && /\s/.test(password)) {
+    return res.status(400).json({
+      message: "รหัสผ่านต้องไม่มีการเว้นวรรค (ช่องว่าง)",
+    });
+  }
+
   let connection;
   try {
     connection = await conn.getConnection();
@@ -273,6 +298,30 @@ export const updateStudent = async (
     return res
       .status(400)
       .json({ message: "กรุณาระบุ ID ของนักเรียนที่ต้องการแก้ไข" });
+  }
+
+  // 🛡️ ตรวจสอบความถูกต้องของยศ: ห้ามมีตัวเลข หรือเครื่องหมาย @
+  if (rank_name && (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))) {
+    return res.status(400).json({
+      message: "ช่องยศต้องไม่มีตัวเลขหรือเครื่องหมาย @",
+    });
+  }
+
+  // 🛡️ ตรวจสอบชื่อและนามสกุล: ห้ามมีตัวเลข หรือสัญลักษณ์ @
+  if (
+    (first_name && (/[0-9\u0E50-\u0E59]/.test(first_name) || first_name.includes("@"))) ||
+    (last_name && (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
+  ) {
+    return res.status(400).json({
+      message: "ชื่อและนามสกุลต้องไม่มีตัวเลขหรือสัญลักษณ์พิเศษ",
+    });
+  }
+
+  // 🛡️ ตรวจสอบรหัสผ่าน: ห้ามมีช่องว่าง/เว้นวรรค
+  if (password && /\s/.test(password)) {
+    return res.status(400).json({
+      message: "รหัสผ่านต้องไม่มีการเว้นวรรค (ช่องว่าง)",
+    });
   }
 
   let connection;
