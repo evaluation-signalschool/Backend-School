@@ -80,41 +80,91 @@ export const getGroupedCourses = async (
 export const addCourse = async (req: Request, res: Response): Promise<void> => {
   let { course_name, curriculum_year } = req.body;
   try {
-    // 1. จัดการ String ที่รับมาโดยลบช่องว่างและวงเล็บออกทั้งหมด
-    const normalizedNewName = course_name.replace(/[\s()]/g, '');
+    // ตัดช่องว่างหน้าและหลัง
+    course_name = typeof course_name === "string" ? course_name.trim() : "";
+    const yearStr =
+      curriculum_year != null ? String(curriculum_year).trim() : "";
 
-    // 2. ค้นหาในฐานข้อมูลโดยใช้ REPLACE ลบช่องว่างและวงเล็บของข้อมูลเดิมมาเทียบ
+    // 1. ตรวจสอบชื่อหลักสูตร
+    if (!course_name) {
+      res.status(400).json({
+        success: false,
+        message: "กรุณาเลือกหรือกรอกชื่อหลักสูตร",
+      });
+      return;
+    }
+
+    if (/\d/.test(course_name)) {
+      res.status(400).json({
+        success: false,
+        message: "ชื่อหลักสูตรต้องเป็นตัวอักษรเท่านั้น ห้ามใส่ตัวเลข",
+      });
+      return;
+    }
+
+    // 2. ตรวจสอบปีหลักสูตร
+    if (!yearStr) {
+      res.status(400).json({
+        success: false,
+        message: "กรุณากรอกปีหลักสูตร",
+      });
+      return;
+    }
+
+    if (!/^\d+$/.test(yearStr)) {
+      res.status(400).json({
+        success: false,
+        message: "กรุณากรอกปีเป็นตัวเลขเท่านั้น",
+      });
+      return;
+    }
+
+    if (yearStr.length !== 4) {
+      res.status(400).json({
+        success: false,
+        message: "กรุณากรอกปี พ.ศ./ค.ศ. จำนวน 4 หลักให้ถูกต้อง",
+      });
+      return;
+    }
+
+    curriculum_year = parseInt(yearStr, 10);
+
+    // 3. จัดการสตริงเพื่อตรวจสอบความซ้ำซ้อน
+    const normalizedNewName = course_name.replace(/[\s()]/g, "");
+
+    // 4. ตรวจสอบชื่อหลักสูตรซ้ำในฐานข้อมูล
     const checkSql = `
       SELECT course_name, curriculum_year 
       FROM courses 
       WHERE REPLACE(REPLACE(REPLACE(course_name, ' ', ''), '(', ''), ')', '') = ?
     `;
-    const [existingCourses]: any = await conn.query(checkSql, [normalizedNewName]);
+    const [existingCourses]: any = await conn.query(checkSql, [
+      normalizedNewName,
+    ]);
 
-    // 3. ถ้าเจอว่ามีชื่อหลักสูตรนี้ อยู่ในระบบแล้ว
+    // 5. หากพบชื่อหลักสูตรเดียวกันในระบบ
     if (existingCourses.length > 0) {
-      // เช็คว่า ปีหลักสูตรซ้ำ
-      const isDuplicateYear = existingCourses.some((c: any) => c.curriculum_year == curriculum_year);
-      
+      const isDuplicateYear = existingCourses.some(
+        (c: any) => c.curriculum_year == curriculum_year,
+      );
+
       if (isDuplicateYear) {
-        // ถ้าชื่อซ้ำ และ ปีซ้ำ -> ไม่ให้เพิ่ม
-        res.status(400).json({ 
-          success: false, 
-          message: `มีหลักสูตรนี้ในปี ${curriculum_year} อยู่แล้ว (${existingCourses[0].course_name})` 
+        res.status(400).json({
+          success: false,
+          message: "หลักสูตรนี้ในปีดังกล่าวมีอยู่ในระบบแล้ว",
         });
         return;
       }
 
-      // ถ้าชื่อซ้ำ แต่คนละปี -> อนุญาตให้เพิ่มได้
       course_name = existingCourses[0].course_name;
     }
 
-    // 4. บันทึกข้อมูล
+    // 6. บันทึกข้อมูล
     const [result] = await conn.query(
       "INSERT INTO courses (course_name, curriculum_year) VALUES (?, ?)",
       [course_name, curriculum_year],
     );
-    res.status(201).json({ success: true, message: "เพิ่มหลักสูตรสำเร็จ" });
+    res.status(201).json({ success: true, message: "บันทึกข้อมูลสำเร็จ" });
   } catch (error) {
     console.error(error);
     res

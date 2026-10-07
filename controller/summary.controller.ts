@@ -548,7 +548,9 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
     }
 
     if (!targetCourse && courseId) {
-      targetCourse = availableCourses.find((c) => c.course_id === Number(courseId));
+      targetCourse = availableCourses.find(
+        (c) => c.course_id === Number(courseId) || c.batches.some((b) => b.course_id === Number(courseId)),
+      );
     }
 
     // ถ้าไม่ระบุหรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่มี
