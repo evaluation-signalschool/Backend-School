@@ -5,13 +5,13 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
   const { batchId } = req.params;
 
   try {
-    // 1. Get all students in this batch
+    // 1. ดึงนักเรียนทั้งหมดในรุ่นนี้
     const [students]: any = await conn.query(
       `SELECT id, student_code, first_name, last_name, rank_name FROM students WHERE batch_id = ?`,
       [batchId]
     );
 
-    // 2. Get all forms for this batch
+    // 2. ดึงแบบฟอร์มประเมินทั้งหมดในรุ่นนี้
     const [forms]: any = await conn.query(
       `SELECT f.id as form_id, f.subject_id, f.evaluation_type, f.target_group, f.form_name, s.subject_name
        FROM evaluation_forms f
@@ -20,7 +20,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       [batchId]
     );
 
-    // 3. Get all submissions
+    // 3. ดึงรายการที่ส่งแบบประเมินแล้ว
     const [submissions]: any = await conn.query(
       `SELECT sub.id as submission_id, sub.form_id, sub.student_id, sub.subject_id, sub.instructor_name 
        FROM evaluation_submissions sub
@@ -29,7 +29,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       [batchId]
     );
 
-    // 4. Get all answers (including dropdown & text)
+    // 4. ดึงคำตอบทั้งหมด (ทั้งคะแนน ตัวเลือก และข้อความ)
     const [allAnswers]: any = await conn.query(
       `SELECT a.submission_id, a.question_id, a.score_value, a.comment, q.question_text, q.question_type, q.order_num
        FROM evaluation_answers a
@@ -41,10 +41,10 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
     );
     const answers = allAnswers.filter((a: any) => a.score_value !== null && a.score_value !== undefined);
 
-    // Helper: format full name
+    // รวม ยศ ชื่อ นามสกุล
     const formatName = (s: any) => `${s.rank_name || ''} ${s.first_name || ''} ${s.last_name || ''}`.trim();
 
-    // 2.5 Get all subjects for this batch
+    // 5. ดึงวิชาทั้งหมดในรุ่นนี้
     const [subjectsQuery]: any = await conn.query(
       `SELECT s.id as subject_id, s.subject_name 
        FROM subjects s
@@ -53,7 +53,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       [batchId]
     );
 
-    // 2.6 Get all questions to map order_num
+    // 6. ดึงข้อคำถามเพื่อเรียงลำดับข้อ
     const [questions]: any = await conn.query(
       `SELECT id, question_text, question_type, order_num FROM evaluation_questions`
     );
@@ -62,17 +62,15 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       questionOrderMap[q.id] = q.order_num;
     });
 
-    // ==========================================
-    // A. Overview (Evaluated vs Pending per Subject)
-    // ==========================================
+    // ภาพรวม: ดูคนที่ประเมินแล้วกับคนที่ยังไม่ประเมินแยกตามวิชา
     const overview = subjectsQuery.map((subject: any) => {
-      // Find all submissions for this subject (for instructor evaluations)
+      // หาคนที่ส่งแบบประเมินวิชานี้
       const subjectSubs = submissions.filter((s: any) => s.subject_id === subject.subject_id);
       
-      // Get unique student IDs who submitted for this subject
+      // หาไอดีนักเรียนที่ประเมินแล้ว
       const evaluatedStudentIds = new Set(subjectSubs.map((s: any) => String(s.student_id)));
       
-      // Calculate pending users
+      // หานักเรียนที่ยังไม่ได้ประเมิน
       const pendingUsers = students
         .filter((student: any) => !evaluatedStudentIds.has(String(student.id)))
         .map((student: any) => ({
@@ -91,14 +89,11 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       };
     });
 
-    // ==========================================
-    // B. Teacher Results (evaluation_type = 'instructor' / target_group='instructor')
-    // ==========================================
-    // We group answers by subject
+    // ผลประเมินครูผู้สอน: รวมคะแนนแยกตามวิชา
     const teacherMap: any = {};
     const teacherForms = forms.filter((f: any) => f.evaluation_type === 'instructor');
     
-    // 1. นำรายวิชาทั้งหมดมาใส่ไว้ใน map ก่อน เพื่อให้วิชาที่ยังไม่มีคนประเมินแสดงผลด้วย
+    // 1. ใส่วิชาทั้งหมดลงใน map ก่อน จะได้เห็นวิชาที่ยังไม่มีคนประเมินด้วย
     subjectsQuery.forEach((subject: any) => {
       const key = subject.subject_name;
       teacherMap[key] = {
@@ -114,13 +109,13 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       };
     });
     
-    // 2. อัปเดตข้อมูลจากคำตอบที่มีจริง
+    // 2. นำคะแนนจริงมาคำนวณใส่แต่ละวิชา
     teacherForms.forEach((form: any) => {
       const formSubs = submissions.filter((s: any) => s.form_id === form.form_id);
       formSubs.forEach((sub: any) => {
         let courseName = form.subject_name || form.form_name;
         
-        // ถ้า submission มี subject_id ระบุไว้ ให้ดึงชื่อวิชาจาก subjectsQuery แทน (อิงตามข้อมูลจริงตอนประเมิน)
+        // ถ้ามี subject_id ให้ดึงชื่อวิชาจริง
         if (sub.subject_id) {
           const actualSubject = subjectsQuery.find((sq: any) => sq.subject_id === sub.subject_id);
           if (actualSubject) {
@@ -149,7 +144,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
         const instrName = sub.instructor_name || 'ไม่ระบุ';
         teacherMap[key].instructors.add(instrName);
         
-        // Get answers for this submission
+        // รวมคะแนนแต่ละข้อของการส่งครั้งนี้
         const subAnswers = answers.filter((a: any) => a.submission_id === sub.submission_id);
         subAnswers.forEach((a: any) => {
           const order = questionOrderMap[a.question_id];
@@ -191,12 +186,10 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       };
     });
 
-    // ==========================================
-    // C. Student Results (evaluation_type = 'teacher_course' or 'student')
-    // ==========================================
+    // ผลประเมินผู้เรียน: ที่ครูประเมินนักเรียน
     const studentMap: any = {};
     
-    // 1. นำรายวิชาทั้งหมดมาใส่ไว้ใน map ก่อน เพื่อให้ทุกวิชาในรุ่นนี้แสดงผลเหมือนในตาราง
+    // 1. ใส่วิชาทั้งหมดลงใน map ก่อน ให้ครบทุกวิชาในรุ่น
     subjectsQuery.forEach((subject: any) => {
       const key = subject.subject_name;
       studentMap[key] = {
@@ -335,9 +328,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
       };
     });
 
-    // ==========================================
-    // D. Course Results (Parts 1, 2, 3: course, director, committee)
-    // ==========================================
+    // ผลประเมินหลักสูตร: แบ่งเป็น 3 ส่วน (ผู้เรียนประเมินหลักสูตร, ผู้เรียนประเมินคณะกำกับ, คณะกำกับประเมินหลักสูตร)
     const [allBatchQuestions]: any = await conn.query(
       `SELECT q.id, q.form_id, q.question_text, q.question_type, q.order_num 
        FROM evaluation_questions q
@@ -399,7 +390,7 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
             levels.push('-');
           }
         } else {
-          // text หรือ dropdown
+          // คำถามแบบข้อความหรือตัวเลือก
           scores.push('-');
           percentages.push('-');
           levels.push('-');
@@ -444,15 +435,12 @@ export const getEvaluationSummary = async (req: Request, res: Response) => {
   }
 };
 
-// ==========================================
-// สรุปผลและสถิติการฝึกอบรม (Training Statistics & Summary)
-// ดึงข้อมูลวิชาจริงและคะแนนจริงตามหลักสูตร พร้อมตรวจสอบสถานะการเปิด/ปิด (is_active)
-// ==========================================
+// สรุปผลและสถิติการฝึกอบรม: ดึงวิชาและคะแนนสอบจริงมาเปรียบเทียบระหว่างรุ่น
 export const getTrainingSummary = async (req: Request, res: Response) => {
   const { courseId, courseName } = req.query;
 
   try {
-    // 1. ดึงข้อมูลหลักสูตรทั้งหมดพร้อมรุ่น เพื่อนำมาตรวจสอบและสร้าง dropdown เลือกหลักสูตร
+    // 1. ดึงหลักสูตรและรุ่นทั้งหมดมาทำเมนูเลือกหลักสูตร
     const coursesSql = `
       SELECT 
         c.id AS course_id, 
@@ -490,7 +478,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       batches: BatchItem[];
     }
 
-    // รวมทุกรุ่นของหลักสูตรชื่อเดียวกันโดยไม่แยกตามปีการศึกษา
+    // รวมรุ่นของหลักสูตรชื่อเดียวกันเข้าด้วยกัน
     const coursesMap: Record<string, CourseGroupItem> = {};
 
     courseRows.forEach((row: any) => {
@@ -514,7 +502,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
         if (isBatchActive) {
           coursesMap[name].is_active = true;
         }
-        // ป้องกันรุ่นซ้ำ
+        // กันรุ่นซ้ำ
         if (!coursesMap[name].batches.some((b) => b.batch_id === row.batch_id)) {
           coursesMap[name].batches.push({
             batch_id: row.batch_id,
@@ -542,7 +530,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       });
     }
 
-    // 2. ค้นหาหลักสูตรเป้าหมาย (ค้นหาตาม courseName ก่อน)
+    // 2. หาหลักสูตรที่เลือก (ดูจากชื่อก่อน)
     let targetCourse: CourseGroupItem | undefined;
 
     if (courseName) {
@@ -563,12 +551,12 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       targetCourse = availableCourses.find((c) => c.course_id === Number(courseId));
     }
 
-    // หากไม่ระบุ หรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่มีข้อมูล
+    // ถ้าไม่ระบุหรือหาไม่เจอ ให้เลือกหลักสูตรแรกที่มี
     if (!targetCourse) {
       targetCourse = availableCourses.find((c) => c.batches.length > 0) || availableCourses[0];
     }
 
-    // เรียงลำดับรุ่นตามลำดับรุ่น (เช่น รุ่นที่ 68 มาก่อน รุ่นที่ 70)
+    // เรียงลำดับรุ่นจากน้อยไปมาก
     const extractBatchNum = (name: string): number => {
       const match = String(name).match(/\d+/);
       return match ? parseInt(match[0], 10) : 0;
@@ -603,7 +591,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
 
     const allBatchIds = allBatches.map((b) => b.batch_id);
 
-    // 3. สร้างรายการเปรียบเทียบคู่รุ่น ก่อนหน้า และ หลัง (เรียงจากรุ่นก่อนหน้าไปรุ่นหลัง)
+    // 3. จับคู่รุ่นก่อนหน้ากับรุ่นหลังมาเทียบกัน
     const pairwiseComparisons = [];
     for (let i = 0; i < allBatches.length - 1; i++) {
       const prev = allBatches[i];
@@ -618,7 +606,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       });
     }
 
-    // 4. ดึงรายวิชาและคะแนนสอบจริง (student_scores) ของทุกรุ่นในหลักสูตรนี้
+    // 4. ดึงคะแนนสอบจริงของทุกรุ่นในหลักสูตรนี้
     const scoreSql = `
       SELECT 
         s.id AS subject_id,
@@ -643,7 +631,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
 
     const [scoreRows]: any = await conn.query(scoreSql, [allBatchIds]);
 
-    // 5. จัดกลุ่มรายวิชาและคะแนนตามชื่อวิชา
+    // 5. จัดกลุ่มคะแนนตามชื่อวิชา
     const subjectMap: Record<string, any> = {};
 
     scoreRows.forEach((row: any) => {
@@ -658,7 +646,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
         };
       }
 
-      // คำนวณคะแนนเฉลี่ยเป็นมาตราส่วน 100
+      // ปรับคะแนนเฉลี่ยเป็นฐาน 100
       let scoreVal: number | null = null;
       if (row.avg_raw_score !== null && row.student_score_count > 0) {
         const maxScore = Number(row.max_score) || 100;
@@ -670,7 +658,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       subjectMap[name].batchScoreCounts[row.batch_id] = Number(row.student_score_count) || 0;
     });
 
-    // แปลงเป็น Array รายวิชาสำหรับแสดงผล
+    // จัดรูปแบบรายวิชาเตรียมส่งกลับ
     const subjectList = Object.values(subjectMap).map((subj: any, index: number) => {
       const scoresForAvg: number[] = [];
       allBatches.forEach((b: any) => {
@@ -684,7 +672,7 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
         ? Number((scoresForAvg.reduce((a, b) => a + b, 0) / scoresForAvg.length).toFixed(1))
         : 0;
 
-      // คำนวณผลต่างเปรียบเทียบ (รุ่นล่าสุด - รุ่นแรก หรือ รุ่นก่อนหน้า)
+      // คิดผลต่างคะแนนระหว่างรุ่น
       let diff: number | null = null;
       if (allBatches.length >= 2) {
         const firstBatchScore = subj.batchScores[allBatches[0].batch_id];
@@ -704,18 +692,18 @@ export const getTrainingSummary = async (req: Request, res: Response) => {
       };
     });
 
-    // 6. คำนวณคะแนนเฉลี่ยรวมทั้งหลักสูตร
+    // 6. คิดคะแนนเฉลี่ยรวมทั้งหลักสูตร
     const subjectsWithScore = subjectList.filter((s) => s.avgScore > 0);
     const totalAvg = subjectsWithScore.length > 0
       ? Number((subjectsWithScore.reduce((acc, s) => acc + s.avgScore, 0) / subjectsWithScore.length).toFixed(1))
       : 0;
 
-    // 7. พัฒนาการก้าวกระโดด & ประเด็นเฝ้าระวัง
+    // 7. หาวิชาที่คะแนนขึ้นเยอะสุด และวิชาที่คะแนนตกเยอะสุด
     const subjectsWithDiff = subjectList.filter((s) => s.diff !== null);
     const topImproved = [...subjectsWithDiff].sort((a, b) => (b.diff || 0) - (a.diff || 0))[0] || null;
     const topDeclined = [...subjectsWithDiff].sort((a, b) => (a.diff || 0) - (b.diff || 0))[0] || null;
 
-    // 8. ข้อเสนอแนะเชิงลึก (Action Plans)
+    // 8. แนะนำแนวทางพัฒนาและถอดบทเรียน
     const actionPlans: string[] = [];
     if (topDeclined && topDeclined.diff && topDeclined.diff < 0) {
       actionPlans.push(

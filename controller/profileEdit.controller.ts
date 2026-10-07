@@ -6,6 +6,7 @@ import streamifier from "streamifier";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { logAdminActivity } from "../utils/activityLogger";
 
+// อัปโหลดไฟล์ไปเก็บที่ Cloudinary
 const uploadToCloudinary = (buffer: Buffer): Promise<any> => {
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
@@ -19,20 +20,50 @@ const uploadToCloudinary = (buffer: Buffer): Promise<any> => {
     });
 };
 
-// 1. POST - Student submits profile edit request
+// 1. นักเรียนส่งคำขอแก้ไขโปรไฟล์
 export const submitEditRequest = async (req: Request, res: Response): Promise<Response | void> => {
     const { student_id, new_rank, new_first_name, new_last_name } = req.body;
     const file = req.file;
 
     if (!student_id) {
-        return res.status(400).json({ message: "Student ID is required." });
+        return res.status(400).json({ message: "ไม่พบรหัสนักเรียน" });
+    }
+
+    const trimmedRank = (new_rank || '').trim();
+    const trimmedFirstName = (new_first_name || '').trim();
+    const trimmedLastName = (new_last_name || '').trim();
+
+    // เช็คว่ากรอกชื่อและนามสกุลครบไหม
+    if (!trimmedFirstName || !trimmedLastName) {
+        return res.status(400).json({ message: "กรุณากรอกชื่อ-นามสกุล" });
+    }
+
+    // ห้ามมีตัวเลขในยศ ชื่อ หรือนามสกุล
+    const hasNumber = /[0-9\u0E50-\u0E59]/;
+    if (trimmedRank && hasNumber.test(trimmedRank)) {
+        return res.status(400).json({ message: "ยศต้องเป็นตัวอักษรเท่านั้น ห้ามใส่ตัวเลข" });
+    }
+    if (hasNumber.test(trimmedFirstName) || hasNumber.test(trimmedLastName)) {
+        return res.status(400).json({ message: "ชื่อ-นามสกุลต้องเป็นตัวอักษรเท่านั้น ห้ามใส่ตัวเลข" });
+    }
+
+    // ยศห้ามมีอักขระพิเศษ (ยอมให้มีจุด วงเล็บ ขีด)
+    const rankSpecialCharRegex = /[^a-zA-Z\u0E01-\u0E3A\u0E40-\u0E4E\s.()\-]/;
+    if (trimmedRank && rankSpecialCharRegex.test(trimmedRank)) {
+        return res.status(400).json({ message: "ยศต้องไม่มีอักขระพิเศษ" });
+    }
+
+    // ชื่อและนามสกุลห้ามมีอักขระพิเศษ
+    const nameSpecialCharRegex = /[^a-zA-Z\u0E01-\u0E3A\u0E40-\u0E4E\s]/;
+    if (nameSpecialCharRegex.test(trimmedFirstName) || nameSpecialCharRegex.test(trimmedLastName)) {
+        return res.status(400).json({ message: "ชื่อ-นามสกุลต้องไม่มีอักขระพิเศษ" });
     }
     
     let connection;
     try {
         connection = await conn.getConnection();
         
-        // Check if there is an existing pending or approved request
+        // เช็คว่าเคยส่งคำขอค้างไว้หรืออนุมัติไปแล้วไหม
         const [existing]: any = await connection.execute(
             `SELECT id, status FROM profile_edit_requests WHERE student_id = ? ORDER BY id DESC LIMIT 1`,
             [student_id]
@@ -40,23 +71,28 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
         
         if (existing.length > 0 && (existing[0].status === 'pending' || existing[0].status === 'approved')) {
             return res.status(400).json({ 
-                message: "You have already submitted a request or your previous request was approved." 
+                message: "คุณเคยส่งคำขอไปแล้ว หรือคำขอเดิมได้รับการอนุมัติแล้ว" 
             });
         }
         
-        // Get original data
+        // ดึงข้อมูลเดิมของนักเรียน
         const [studentRes]: any = await connection.execute(
             `SELECT rank_name, first_name, last_name FROM students WHERE id = ?`,
             [student_id]
         );
         
         if (studentRes.length === 0) {
-            return res.status(404).json({ message: "Student not found." });
+            return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียน" });
         }
         
         const student = studentRes[0];
+
+        // ถ้าเปลี่ยนยศต้องแนบเอกสารหลักฐานด้วย
+        if (student.rank_name && trimmedRank && student.rank_name.trim() !== trimmedRank && !file) {
+            return res.status(400).json({ message: "กรุณาแนบไฟล์เอกสารยืนยันการเลื่อนยศ" });
+        }
         
-        // Insert new request
+        // บันทึกคำขอลงฐานข้อมูล
         const query = `
             INSERT INTO profile_edit_requests 
             (student_id, original_rank, original_first_name, original_last_name, 
@@ -84,16 +120,16 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
             documentData
         ]);
         
-        res.status(201).json({ message: "Profile edit request submitted successfully." });
+        res.status(201).json({ message: "ส่งคำขอแก้ไขโปรไฟล์เรียบร้อยแล้ว" });
     } catch (error) {
         console.error("Error submitting profile edit request:", error);
-        res.status(500).json({ message: "Internal server error" });
+        res.status(500).json({ message: "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์" });
     } finally {
         if (connection) connection.release();
     }
 };
 
-// 2. GET - Student checks their request status
+// 2. นักเรียนเช็คสถานะคำขอของตัวเอง
 export const checkEditStatus = async (req: Request, res: Response): Promise<Response> => {
     const { studentId } = req.params;
     
@@ -118,13 +154,13 @@ export const checkEditStatus = async (req: Request, res: Response): Promise<Resp
         });
     } catch (error) {
         console.error("Error checking edit status:", error);
-        return res.status(500).json({ message: "Internal server error" });
+        return res.status(500).json({ message: "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์" });
     } finally {
         if (connection) connection.release();
     }
 };
 
-// 3. GET - Admin gets all requests
+// 3. แอดมินดูรายการคำขอทั้งหมด
 export const getAllRequests = async (req: Request, res: Response): Promise<Response> => {
     let connection;
     try {
@@ -140,19 +176,19 @@ export const getAllRequests = async (req: Request, res: Response): Promise<Respo
         return res.status(200).json(rows);
     } catch (error) {
         console.error("Error fetching all requests:", error);
-        return res.status(500).json({ message: "Internal server error" });
+        return res.status(500).json({ message: "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์" });
     } finally {
         if (connection) connection.release();
     }
 };
 
-// 4. PUT - Admin approves or rejects request
+// 4. แอดมินอนุมัติหรือปฏิเสธคำขอ
 export const updateRequestStatus = async (req: Request, res: Response): Promise<Response> => {
     const { id } = req.params;
-    const { status } = req.body; // 'approved' or 'rejected'
+    const { status } = req.body; // 'approved' หรือ 'rejected'
     
     if (status !== 'approved' && status !== 'rejected') {
-        return res.status(400).json({ message: "Invalid status." });
+        return res.status(400).json({ message: "สถานะไม่ถูกต้อง" });
     }
     
     let connection;
@@ -160,7 +196,7 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
         connection = await conn.getConnection();
         await connection.beginTransaction();
         
-        // Get the request
+        // ดึงข้อมูลคำขอ
         const [reqRows]: any = await connection.execute(
             `SELECT * FROM profile_edit_requests WHERE id = ?`,
             [id]
@@ -168,23 +204,23 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
         
         if (reqRows.length === 0) {
             await connection.rollback();
-            return res.status(404).json({ message: "Request not found." });
+            return res.status(404).json({ message: "ไม่พบคำขอ" });
         }
         
         const request = reqRows[0];
         
         if (request.status !== 'pending') {
             await connection.rollback();
-            return res.status(400).json({ message: "Request is already processed." });
+            return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
         }
         
-        // Update request status
+        // อัปเดตสถานะคำขอ
         await connection.execute(
             `UPDATE profile_edit_requests SET status = ? WHERE id = ?`,
             [status, id]
         );
         
-        // If approved, update student profile
+        // ถ้าอนุมัติ ให้อัปเดตข้อมูลจริงของนักเรียน
         if (status === 'approved') {
             await connection.execute(
                 `UPDATE students SET rank_name = ?, first_name = ?, last_name = ? WHERE id = ?`,
@@ -192,13 +228,11 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
             );
         }
         
-        // Delete document from Cloudinary if exists to free up space
+        // ลบไฟล์ใน Cloudinary ทิ้งเพื่อประหยัดพื้นที่
         if (request.document_path) {
             try {
                 const docData = JSON.parse(request.document_path);
                 if (docData && docData.public_id) {
-                    // For raw files (like pdf sometimes), resource_type might be different, but Cloudinary usually handles it.
-                    // We can specify resource_type if needed, or let it guess.
                     await cloudinary.uploader.destroy(docData.public_id, { resource_type: "raw" }).catch(() => {});
                     await cloudinary.uploader.destroy(docData.public_id, { resource_type: "image" }).catch(() => {});
                 }
@@ -209,6 +243,7 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
         
         await connection.commit();
 
+        // บันทึกประวัติการทำงานของแอดมิน
         const user = (req as AuthRequest).user;
         if (user?.admin_id) {
             logAdminActivity({
@@ -222,17 +257,17 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
             });
         }
 
-        return res.status(200).json({ message: `Request ${status} successfully.` });
+        return res.status(200).json({ message: status === 'approved' ? 'อนุมัติคำขอเรียบร้อยแล้ว' : 'ปฏิเสธคำขอเรียบร้อยแล้ว' });
     } catch (error) {
         if (connection) await connection.rollback();
         console.error("Error updating request status:", error);
-        return res.status(500).json({ message: "Internal server error" });
+        return res.status(500).json({ message: "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์" });
     } finally {
         if (connection) connection.release();
     }
 };
 
-// 5. DELETE - Admin deletes a request permanently
+// 5. แอดมินลบคำขอทิ้ง
 export const deleteRequest = async (req: Request, res: Response): Promise<Response> => {
     const { id } = req.params;
     
@@ -245,10 +280,10 @@ export const deleteRequest = async (req: Request, res: Response): Promise<Respon
             [id]
         );
         
-        return res.status(200).json({ message: "Request deleted successfully." });
+        return res.status(200).json({ message: "ลบคำขอเรียบร้อยแล้ว" });
     } catch (error) {
         console.error("Error deleting request:", error);
-        return res.status(500).json({ message: "Internal server error" });
+        return res.status(500).json({ message: "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์" });
     } finally {
         if (connection) connection.release();
     }

@@ -4,9 +4,19 @@ import { conn } from "../dbconn";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { logAdminActivity } from "../utils/activityLogger";
 
-// ==========================================
-// 3. อัปเดตคะแนนเต็มรายวิชา (Max Score)
-// ==========================================
+// เกณฑ์การตัดเกรดมาตรฐาน
+const GRADING_CRITERIA = [
+  { grade_name: "A", grade_point: 4.0, min_percent: 91 },
+  { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
+  { grade_name: "B", grade_point: 3.0, min_percent: 81 },
+  { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
+  { grade_name: "C", grade_point: 2.0, min_percent: 70 },
+  { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
+  { grade_name: "D", grade_point: 1.0, min_percent: 50 },
+  { grade_name: "F", grade_point: 0.0, min_percent: 0 },
+];
+
+// 1. อัปเดตคะแนนเต็มรายวิชา
 export const updateSubjectMaxScore = async (
   req: Request,
   res: Response,
@@ -21,9 +31,6 @@ export const updateSubjectMaxScore = async (
       return;
     }
 
-    // ✅ เปลี่ยนมาใช้ INSERT ... ON DUPLICATE KEY UPDATE
-    // ถ้าไม่มีข้อมูล จะทำการสร้างให้ใหม่ (แก้ปัญหา 404)
-    // ถ้ามีข้อมูลอยู่แล้ว จะอัปเดตค่าให้แทน
     const updateQuery = `
       INSERT INTO subject_batch_settings (batch_id, subject_id, max_score) 
       VALUES (?, ?, ?) 
@@ -48,9 +55,7 @@ export const updateSubjectMaxScore = async (
   }
 };
 
-// ==========================================
-// 4. ดึงข้อมูลคะแนนทั้งหมด (ของนักเรียน 1 คน) ฝั่งนร
-// ==========================================
+// 2. ดึงข้อมูลคะแนนทั้งหมด (ของนักเรียน 1 คน)
 export const getStudentScores = async (
   req: AuthRequest,
   res: Response,
@@ -64,14 +69,15 @@ export const getStudentScores = async (
       return;
     }
 
-    // 🛡️ ป้องกัน IDOR: ตรวจสอบสิทธิ์ว่า user ใน Token มีสิทธิ์เข้าถึงข้อมูลของ studentId หรือไม่
+    // เช็คสิทธิ์ว่า user ใน Token มีสิทธิ์เข้าถึงข้อมูลของ studentId หรือไม่
     const currentUser = req.user;
     if (currentUser) {
       const isOwner = String(currentUser.student_id) === String(studentId);
-      const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
+      const isAdmin =
+        currentUser.role === "admin" || currentUser.role === "superadmin";
       if (!isOwner && !isAdmin) {
         console.warn(
-          `[Security Alert] IDOR attempt detected! User: ${currentUser.student_id || currentUser.email} tried to access scores of Student ID: ${studentId} from IP: ${req.ip}`
+          `[Security Alert] IDOR attempt detected! User: ${currentUser.student_id || currentUser.email} tried to access scores of Student ID: ${studentId} from IP: ${req.ip}`,
         );
         res.status(403).json({
           error: "คุณไม่มีสิทธิ์เข้าถึงข้อมูลคะแนนของนักเรียนท่านอื่น",
@@ -80,15 +86,14 @@ export const getStudentScores = async (
       }
     }
 
-    // 1. อัปเดต detailQuery เพื่อเช็คประวัติการประเมิน
+    // ดึงคะแนนรายวิชาและสถานะการประเมิน
     const detailQuery = `
       SELECT 
         sg.group_name, 
-        sub.id AS subject_id,   -- เพิ่ม subject_id ส่งกลับไปด้วย เผื่อต้องใช้ทำเงื่อนไขหน้าบ้าน
+        sub.id AS subject_id,  
         sub.subject_name, 
         sbs.max_score, 
         COALESCE(ss.raw_score, 0) AS raw_score,
-        -- เช็คว่าใน evaluation_submissions มีข้อมูลหรือไม่ (ถ้ามี=1(true), ถ้าไม่มี=0(false))
         IF(eval.id IS NOT NULL, true, false) AS is_evaluated
       FROM subject_batch_settings sbs
       JOIN subjects sub ON sbs.subject_id = sub.id
@@ -103,20 +108,19 @@ export const getStudentScores = async (
       ORDER BY sg.id, sub.id;
     `;
 
-    // สังเกตว่าเรามี ? 3 ตัว (ss.student_id, eval.student_id, sbs.batch_id)
     const [subjectDetails] = await conn.execute<RowDataPacket[]>(detailQuery, [
       studentId,
-      studentId, // ส่ง studentId เข้าไปเทียบใน LEFT JOIN ด้วย
+      studentId,
       batchId,
     ]);
 
-    // 2. แปลงผลลัพธ์จาก MySQL ให้เป็น boolean เป๊ะๆ (1/0 -> true/false)
+    // แปลงผลลัพธ์ให้เป็น boolean
     const formattedSubjectDetails = subjectDetails.map((row) => ({
       ...row,
-      is_evaluated: !!row.is_evaluated, // บังคับแปลงเป็น boolean ให้ Angular รับค่าง่ายๆ
+      is_evaluated: !!row.is_evaluated,
     }));
 
-    // 3. summaryQuery ใช้ตัวเดิมได้เลย (คะแนนรวมไม่ได้รับผลกระทบ)
+    // ดึงผลรวมคะแนนรายกลุ่มวิชา
     const summaryQuery = `
       SELECT 
         sg.group_name, 
@@ -136,12 +140,12 @@ export const getStudentScores = async (
       batchId,
     ]);
 
-    // 4. ส่งผลลัพธ์กลับ
+    // ส่งผลลัพธ์กลับ
     res.status(200).json({
       message: "ดึงข้อมูลสำเร็จ",
       student_id: studentId,
       batch_id: batchId,
-      subject_details: formattedSubjectDetails, // ใช้ตัวที่เราแปลง boolean แล้ว
+      subject_details: formattedSubjectDetails,
       group_summaries: groupSummaries,
     });
   } catch (error) {
@@ -150,9 +154,7 @@ export const getStudentScores = async (
   }
 };
 
-// ==========================================
-//  5. (NEW) แอดมินดึงรายชื่อนักเรียนและคะแนนดิบ 1 วิชา (ทั้งห้อง)
-// ==========================================
+// 3. แอดมินดึงรายชื่อนักเรียนและคะแนนดิบ 1 วิชา (ทั้งห้อง)
 export const getAdminSubjectScores = async (
   req: Request,
   res: Response,
@@ -222,9 +224,7 @@ export const getAdminSubjectScores = async (
   }
 };
 
-// ==========================================
-// 6. (NEW) แอดมินบันทึกคะแนนรวดเดียวทั้งห้อง
-// ==========================================
+// 4. แอดมินบันทึกคะแนนทั้งห้อง
 export const saveAdminBulkScores = async (
   req: Request,
   res: Response,
@@ -303,7 +303,7 @@ export const saveAdminBulkScores = async (
   }
 };
 
-//ตัดเกรด
+// 5. ตัดเกรดรายกลุ่มวิชา
 export const processGroupGrades = async (
   req: Request,
   res: Response,
@@ -320,27 +320,9 @@ export const processGroupGrades = async (
   }
 
   try {
-    // 1. ดึงเกณฑ์การตัดเกรด
-    let [criteria]: any = await conn.query(
-      `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
-       WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
-      [batchId],
-    );
+    const criteria = GRADING_CRITERIA;
 
-    if (criteria.length === 0) {
-      criteria = [
-        { grade_name: "A", grade_point: 4.0, min_percent: 91 },
-        { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
-        { grade_name: "B", grade_point: 3.0, min_percent: 81 },
-        { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
-        { grade_name: "C", grade_point: 2.0, min_percent: 70 },
-        { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
-        { grade_name: "D", grade_point: 1.0, min_percent: 50 },
-        { grade_name: "F", grade_point: 0.0, min_percent: 0 },
-      ];
-    }
-
-    // 🌟 2. [ส่วนที่แก้ไข] ดึงข้อมูลวิชาย่อย เพื่อนำไปสร้างเป็นคอลัมน์ 🌟
+    // ดึงข้อมูลวิชาย่อยเพื่อนำไปสร้างคอลัมน์
     const groupSql = `
       SELECT sg.group_name, sg.credits AS total_credit, sub.id AS subject_id, sub.subject_name, sbs.max_score, sub.is_su
       FROM subject_groups sg
@@ -364,7 +346,7 @@ export const processGroupGrades = async (
     const totalGroupCredit = Number(subjectsInGroup[0].total_credit) || 0;
 
     let totalGroupMaxScore = 0;
-    // สร้าง Array เก็บรายวิชาเพื่อส่งไปวาดหัวตารางใน Angular
+    // รวมรายวิชาเพื่อส่งไปสร้างหัวตาราง
     const subjectColumns = subjectsInGroup.map((s: any) => {
       totalGroupMaxScore += Number(s.max_score) || 0;
       return {
@@ -378,7 +360,7 @@ export const processGroupGrades = async (
     const isGroupSU =
       subjectColumns.length > 0 && subjectColumns.every((s: any) => s.is_su);
 
-    // 🌟 3. [ส่วนที่แก้ไข] ดึงคะแนนดิบทั้งหมดแยกตามรายวิชา ไม่ใช้ SUM() แล้ว 🌟
+    // ดึงคะแนนดิบทั้งหมดแยกตามรายวิชา
     const scoreSql = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
@@ -391,11 +373,11 @@ export const processGroupGrades = async (
     `;
     const [rawScores]: any = await conn.query(scoreSql, [batchId, groupId]);
 
-    // นำคะแนนมาจัดกลุ่มตามนักเรียนแต่ละคน
+    // จัดกลุ่มคะแนนตามนักเรียนแต่ละคน
     const studentMap = new Map();
 
     rawScores.forEach((row: any) => {
-      // ถ้านักเรียนคนนี้ยังไม่มีใน Map ให้สร้างใหม่พร้อมกระเป๋าเก็บคะแนนแยกวิชา (subject_scores)
+      // ถ้านักเรียนยังไม่อยู่ใน map ให้สร้างใหม่
       if (!studentMap.has(row.student_id)) {
         studentMap.set(row.student_id, {
           student_id: row.student_id,
@@ -403,18 +385,18 @@ export const processGroupGrades = async (
           full_name:
             `${row.rank_name || ""} ${row.first_name} ${row.last_name}`.trim(),
           total_raw_score: 0,
-          subject_scores: {}, // 👈 กระเป๋าเก็บคะแนนแต่ละวิชา
+          subject_scores: {}, // คะแนนแยกแต่ละวิชา
         });
       }
 
       const st = studentMap.get(row.student_id);
       const score = Number(row.raw_score) || 0;
 
-      st.subject_scores[row.subject_id] = score; // หยอดคะแนนลงวิชาที่ตรงกัน
-      st.total_raw_score += score; // บวกคะแนนรวม
+      st.subject_scores[row.subject_id] = score;
+      st.total_raw_score += score;
     });
 
-    // 4. ตัดเกรดและคำนวณค่าประกอบ (Index)
+    // ตัดเกรดและคิดค่า Index
     const finalResults = Array.from(studentMap.values()).map((st: any) => {
       if (isGroupSU) {
         const isPassed = st.total_raw_score > 0;
@@ -447,7 +429,10 @@ export const processGroupGrades = async (
         }
       }
 
-      const safeGradePoint = Math.min(4.0, Math.max(0, Number(assignedGrade.grade_point) || 0));
+      const safeGradePoint = Math.min(
+        4.0,
+        Math.max(0, Number(assignedGrade.grade_point) || 0),
+      );
       const indexValue = totalGroupCredit * safeGradePoint;
 
       return {
@@ -460,18 +445,18 @@ export const processGroupGrades = async (
         grade: assignedGrade.grade_name,
         grade_point: safeGradePoint.toFixed(2),
         index_value: indexValue.toFixed(2),
-        subject_scores: st.subject_scores, // 👈 ส่งกระเป๋าคะแนนแยกวิชากลับไปด้วย
+        subject_scores: st.subject_scores, // คะแนนแยกแต่ละวิชา
       };
     });
 
-    // 5. ส่งกลับข้อมูลไปให้หน้าเว็บ
+    // ส่งข้อมูลกลับไปที่หน้าเว็บ
     res.status(200).json({
       success: true,
       summary: {
         group_name: actualGroupName,
         total_credit: totalGroupCredit,
         total_max_score: totalGroupMaxScore,
-        subjects: subjectColumns, // 👈 ส่งหัวตารางกลับไปให้ Angular วนลูป
+        subjects: subjectColumns,
         is_su: isGroupSU,
       },
       data: finalResults,
@@ -484,6 +469,7 @@ export const processGroupGrades = async (
   }
 };
 
+// 6. ดึงคะแนนรวม ตัดเกรด และคำนวณ GPA ทั้งรุ่น
 export const getscore = async (req: Request, res: Response): Promise<void> => {
   try {
     const batchId = req.query.batch_id;
@@ -492,27 +478,9 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 1. ดึงเกณฑ์การตัดเกรดมาเตรียมไว้
-    let [criteria]: any = await conn.query(
-      `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
-       WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
-      [batchId],
-    );
+    const criteria = GRADING_CRITERIA;
 
-    if (criteria.length === 0) {
-      criteria = [
-        { grade_name: "A", grade_point: 4.0, min_percent: 91 },
-        { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
-        { grade_name: "B", grade_point: 3.0, min_percent: 81 },
-        { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
-        { grade_name: "C", grade_point: 2.0, min_percent: 70 },
-        { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
-        { grade_name: "D", grade_point: 1.0, min_percent: 50 },
-        { grade_name: "F", grade_point: 0.0, min_percent: 0 },
-      ];
-    }
-
-    // 🌟 2. ดึงข้อมูลวิชา คะแนนรายวิชา และ "คะแนนพิเศษ 3 ก้อน" 🌟
+    // ดึงคะแนนรายวิชาและคะแนนพิเศษ (เวลาฝึก เวลาสอบ ความประพฤติ)
     const query = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name,
@@ -523,7 +491,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         sbs.max_score, 
         sub.is_su,
         sc.raw_score,
-        -- ดึงคะแนนพิเศษ 3 ตัวมาจาก student_summary_scores
         sss.training_time_score,
         sss.exam_time_score,
         sss.behavior_score
@@ -532,7 +499,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       JOIN subjects sub ON sbs.subject_id = sub.id
       JOIN subject_groups sg ON sub.group_id = sg.id 
       LEFT JOIN student_scores sc ON st.id = sc.student_id AND sbs.id = sc.setting_id 
-      -- เพิ่ม JOIN ตารางสรุปคะแนน
       LEFT JOIN student_summary_scores sss ON st.id = sss.student_id AND st.batch_id = sss.batch_id
       WHERE st.batch_id = ?
       ORDER BY st.student_code ASC, sub.id ASC
@@ -545,7 +511,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 3. จัดกลุ่มวิชา
+    // จัดกลุ่มวิชา
     const groupsMap: any = {};
     const studentsMap: any = {};
     const masterSubjects: any[] = [];
@@ -553,12 +519,12 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
     let totalCreditAll = 0;
 
     rows.forEach((row: any) => {
-      // --- จัดการข้อมูลหัวตาราง (กลุ่มวิชา) ---
+      // จัดการกลุ่มวิชา
       if (!groupsMap[row.group_id]) {
         groupsMap[row.group_id] = {
           groupId: row.group_id,
           groupName: row.group_name || "",
-          groupCode: row.group_name || "", // เก็บชื่อดั้งเดิม (เช่น M01, MN01) ไว้ตรวจสอบสี
+          groupCode: row.group_name || "",
           credit: Number(row.credit) || 0,
           subjects: [],
           group_max_score: 0,
@@ -568,7 +534,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
 
       const group = groupsMap[row.group_id];
 
-      // If any subject in group is not SU, the group is not fully SU
+      // ถ้ามีวิชาที่ไม่ใช่ SU กลุ่มนี้จะไม่ใช่ SU
       if (!row.is_su) {
         group.is_su = false;
       }
@@ -589,7 +555,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         totalMaxScoreAll += newSubject.max_score;
       }
 
-      // --- 🌟 จัดการข้อมูลนักเรียน (เพิ่มคะแนนพิเศษ 3 ก้อนเข้าไปที่นี่) 🌟 ---
+      // จัดการข้อมูลนักเรียนและคะแนนพิเศษ
       if (!studentsMap[row.student_id]) {
         studentsMap[row.student_id] = {
           student_id: row.student_id,
@@ -602,7 +568,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           gpa: "0.00",
           subject_scores: {},
           group_raw_scores: {},
-          // แมปคะแนนทั้ง 3 ตัวส่งกลับไป ถ้าเป็น null (ยังไม่เคยบันทึก) ให้เป็น 0
           training_time_score: Number(row.training_time_score) || 0,
           exam_time_score: Number(row.exam_time_score) || 0,
           behavior_score: Number(row.behavior_score) || 0,
@@ -637,9 +602,11 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       }
     });
 
-    // 4. ตัดเกรดและคำนวณ GPA
+    // ตัดเกรดและคิด GPA
     const data = Object.values(studentsMap).map((student: any) => {
-      student.total_raw_score = Number(Number(student.total_raw_score || 0).toFixed(4));
+      student.total_raw_score = Number(
+        Number(student.total_raw_score || 0).toFixed(4),
+      );
       student.total_max_score = totalMaxScoreAll;
       student.percent =
         totalMaxScoreAll > 0
@@ -675,7 +642,10 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
               }
             }
 
-            const gradePoint = Math.min(4.0, Math.max(0, Number(assignedGrade.grade_point) || 0));
+            const gradePoint = Math.min(
+              4.0,
+              Math.max(0, Number(assignedGrade.grade_point) || 0),
+            );
             const indexValue = grp.credit * gradePoint;
             student.group_results[grp.groupId] = {
               grade: assignedGrade.grade_name,
@@ -696,11 +666,9 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       });
 
       const rawGpa =
-        totalCreditForGPA > 0
-          ? totalIndexForGPA / totalCreditForGPA
-          : 0;
+        totalCreditForGPA > 0 ? totalIndexForGPA / totalCreditForGPA : 0;
       student.gpa = Math.min(4.0, Math.max(0, rawGpa)).toFixed(2);
-      delete student.group_raw_scores; // ลบตัวแปรทดเลขทิ้ง
+      delete student.group_raw_scores;
       return student;
     });
 
@@ -722,6 +690,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
       .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลข้อมูล" });
   }
 };
+// 7. ดึงข้อมูลคะแนนพิเศษทั้งรุ่น (เวลาฝึกอบรม, เวลาสอบ, ความประพฤติ)
 export const getBatchSummaryScores = async (
   req: Request,
   res: Response,
@@ -770,6 +739,7 @@ export const getBatchSummaryScores = async (
   }
 };
 
+// 8. บันทึกข้อมูลคะแนนพิเศษทั้งรุ่น
 export const saveBatchScores = async (
   req: Request,
   res: Response,
@@ -777,7 +747,7 @@ export const saveBatchScores = async (
   try {
     const { batch_id, scores } = req.body;
 
-    // --- Validate ข้อมูลเบื้องต้น ---
+    // เช็คความถูกต้องของข้อมูล
     if (!batch_id || !Array.isArray(scores)) {
       res.status(400).json({
         success: false,
@@ -794,23 +764,28 @@ export const saveBatchScores = async (
       return;
     }
 
-    // --- เตรียมข้อมูลสำหรับ Bulk Insert ---
-    // หากฟิลด์ใดไม่ได้ส่งมา (undefined) ให้เป็น null เพื่อไม่ให้เขียนทับค่าเดิมใน DB ผ่าน COALESCE
+    // เตรียมข้อมูลสำหรับบันทึก
     const values = scores.map((student: any) => [
       batch_id,
       student.student_id,
-      student.training_time_score !== undefined && student.training_time_score !== null && student.training_time_score !== ""
+      student.training_time_score !== undefined &&
+      student.training_time_score !== null &&
+      student.training_time_score !== ""
         ? Number(student.training_time_score)
         : null,
-      student.exam_time_score !== undefined && student.exam_time_score !== null && student.exam_time_score !== ""
+      student.exam_time_score !== undefined &&
+      student.exam_time_score !== null &&
+      student.exam_time_score !== ""
         ? Number(student.exam_time_score)
         : null,
-      student.behavior_score !== undefined && student.behavior_score !== null && student.behavior_score !== ""
+      student.behavior_score !== undefined &&
+      student.behavior_score !== null &&
+      student.behavior_score !== ""
         ? Number(student.behavior_score)
         : null,
     ]);
 
-    // --- คำสั่ง SQL (Upsert โดยใช้ COALESCE เพื่อรักษาค่าฟิลด์เดิมไว้หากไม่ได้ส่งฟิลด์นั้นมา) ---
+    // บันทึกหรืออัปเดตข้อมูลคะแนนลงตาราง
     const sql = `
             INSERT INTO student_summary_scores 
             (batch_id, student_id, training_time_score, exam_time_score, behavior_score)
@@ -821,10 +796,8 @@ export const saveBatchScores = async (
             behavior_score = COALESCE(VALUES(behavior_score), student_summary_scores.behavior_score, 200)
         `;
 
-    // --- สั่งรัน Query ---
     const [result]: any = await conn.query(sql, [values]);
 
-    // ส่ง Response
     res.status(200).json({
       success: true,
       message: "บันทึกข้อมูลคะแนนเรียบร้อยแล้ว",
@@ -840,9 +813,7 @@ export const saveBatchScores = async (
   }
 };
 
-// ==========================================
-// 7. ดึงข้อมูลสถานะการส่งคะแนนตามรุ่น (Score Submissions)
-// ==========================================
+// 9. ดึงข้อมูลสถานะการส่งคะแนนตามรุ่น
 export const getScoreSubmissions = async (
   req: Request,
   res: Response,
@@ -887,19 +858,19 @@ export const getScoreSubmissions = async (
 
     const [rows]: any = await conn.query(sql, [batchId, batchId]);
 
-    // จัดเรียงตามกลุ่มวิชา (วิชาหลัก M -> วิชารอง MN -> วิชาประกอบ S -> ภาคปฏิบัติ P)
+    // เรียงตามกลุ่มวิชา
     const getGroupPrefixOrder = (name: string): number => {
-      const upper = (name || '').trim().toUpperCase();
-      if (upper.startsWith('MN') || upper.includes('รอง')) return 2;
-      if (upper.startsWith('M') || upper.includes('หลัก')) return 1;
-      if (upper.startsWith('S') || upper.includes('ประกอบ')) return 3;
-      if (upper.startsWith('P') || upper.includes('ปฏิบัติ')) return 4;
+      const upper = (name || "").trim().toUpperCase();
+      if (upper.startsWith("MN") || upper.includes("รอง")) return 2;
+      if (upper.startsWith("M") || upper.includes("หลัก")) return 1;
+      if (upper.startsWith("S") || upper.includes("ประกอบ")) return 3;
+      if (upper.startsWith("P") || upper.includes("ปฏิบัติ")) return 4;
       return 5;
     };
 
     const compareGroupNames = (aName: string, bName: string): number => {
-      const a = (aName || '').trim();
-      const b = (bName || '').trim();
+      const a = (aName || "").trim();
+      const b = (bName || "").trim();
       const orderA = getGroupPrefixOrder(a);
       const orderB = getGroupPrefixOrder(b);
       if (orderA !== orderB) return orderA - orderB;
@@ -910,11 +881,14 @@ export const getScoreSubmissions = async (
         const numB = parseInt(matchB[0], 10);
         if (numA !== numB) return numA - numB;
       }
-      return a.localeCompare(b, 'th', { numeric: true, sensitivity: 'base' });
+      return a.localeCompare(b, "th", { numeric: true, sensitivity: "base" });
     };
 
     rows.sort((a: any, b: any) => {
-      const groupComp = compareGroupNames(a.group_name || '', b.group_name || '');
+      const groupComp = compareGroupNames(
+        a.group_name || "",
+        b.group_name || "",
+      );
       if (groupComp !== 0) return groupComp;
       return (a.subject_id || 0) - (b.subject_id || 0);
     });
@@ -931,9 +905,7 @@ export const getScoreSubmissions = async (
   }
 };
 
-// ==========================================
-// 8. บันทึกสถานะการส่งคะแนน
-// ==========================================
+// 10. บันทึกสถานะการส่งคะแนน
 export const saveScoreSubmissions = async (
   req: Request,
   res: Response,
@@ -988,9 +960,7 @@ export const saveScoreSubmissions = async (
   }
 };
 
-// ==========================================
-// 10. ระบบจัดลำดับผลการเรียน 1 ถึง N และ Tie-Breaking (คำนวณที่ Backend)
-// ==========================================
+// 11. จัดลำดับผลการเรียนและแก้คะแนนเท่ากัน (Tie-Break)
 export const getBatchRanking = async (
   req: Request,
   res: Response,
@@ -1003,15 +973,18 @@ export const getBatchRanking = async (
     }
 
     const mode = req.query.mode || req.body?.mode;
-    if (mode === 'unit_selection') {
+    if (mode === "unit_selection") {
       return getUnitSelectionRanking(req, res);
     }
 
-    // วิชาที่แอดมินเลือกสำหรับตัดสิน Tie-Break
+    // วิชาที่เลือกมาตัดสินกรณีคะแนนเท่ากัน
     let selectedSubIds: number[] = [];
     let hasExplicitSubjects = false;
 
-    if (req.body?.subject_ids !== undefined && Array.isArray(req.body.subject_ids)) {
+    if (
+      req.body?.subject_ids !== undefined &&
+      Array.isArray(req.body.subject_ids)
+    ) {
       selectedSubIds = req.body.subject_ids.map(Number);
       hasExplicitSubjects = true;
     } else if (req.query?.subject_ids !== undefined) {
@@ -1019,32 +992,17 @@ export const getBatchRanking = async (
       if (qStr.length === 0) {
         selectedSubIds = [];
       } else {
-        selectedSubIds = qStr.split(",").map(Number).filter((n) => !isNaN(n));
+        selectedSubIds = qStr
+          .split(",")
+          .map(Number)
+          .filter((n) => !isNaN(n));
       }
       hasExplicitSubjects = true;
     }
 
-    // 1. ดึงเกณฑ์การตัดเกรด
-    let [criteria]: any = await conn.query(
-      `SELECT grade_name, grade_point, min_percent FROM grading_criteria 
-       WHERE batch_id = ? OR batch_id IS NULL ORDER BY min_percent DESC`,
-      [batchId],
-    );
+    const criteria = GRADING_CRITERIA;
 
-    if (!criteria || criteria.length === 0) {
-      criteria = [
-        { grade_name: "A", grade_point: 4.0, min_percent: 91 },
-        { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
-        { grade_name: "B", grade_point: 3.0, min_percent: 81 },
-        { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
-        { grade_name: "C", grade_point: 2.0, min_percent: 70 },
-        { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
-        { grade_name: "D", grade_point: 1.0, min_percent: 50 },
-        { grade_name: "F", grade_point: 0.0, min_percent: 0 },
-      ];
-    }
-
-    // 2. ดึงข้อมูลนักเรียนและคะแนนทุกวิชา
+    // ดึงข้อมูลนักเรียนและคะแนนทุกวิชา
     const query = `
       SELECT 
         st.id AS student_id, st.student_code, st.rank_name, st.first_name, st.last_name, st.affiliation,
@@ -1076,12 +1034,16 @@ export const getBatchRanking = async (
         data: [],
         tiedGroups: [],
         availableSubjects: [],
-        summary: { total_students: 0, completed_students: 0, incomplete_students: 0 },
+        summary: {
+          total_students: 0,
+          completed_students: 0,
+          incomplete_students: 0,
+        },
       });
       return;
     }
 
-    // 3. รวบรวมวิชาทั้งหมด และคำนวณคะแนนนักเรียนแต่ละคน
+    // รวบรวมวิชาและคำนวณคะแนนนักเรียนแต่ละคน
     const groupsMap: Record<number, any> = {};
     const studentsMap: Record<number, any> = {};
     const masterSubjects: any[] = [];
@@ -1126,7 +1088,8 @@ export const getBatchRanking = async (
           first_name: row.first_name || "",
           last_name: row.last_name || "",
           affiliation: row.affiliation || "",
-          full_name: `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
+          full_name:
+            `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
           total_raw_score: 0,
           total_max_score: 0,
           percent: "0.00",
@@ -1144,13 +1107,14 @@ export const getBatchRanking = async (
       if (row.raw_score !== null && row.raw_score !== undefined) {
         const score = Number(row.raw_score);
         st.subject_scores[row.subject_id] = score;
-        st.group_raw_scores[row.group_id] = (st.group_raw_scores[row.group_id] || 0) + score;
+        st.group_raw_scores[row.group_id] =
+          (st.group_raw_scores[row.group_id] || 0) + score;
         st.total_raw_score += score;
         st.scored_subjects_count++;
       }
     });
 
-    // หาก Client ไม่ได้ส่ง subject_ids มาเลย (เช่น Initial Batch Load) ให้เลือกเฉพาะวิชาหลัก (M) หรือวิชาที่มีเกรดเป็นค่าเริ่มต้น
+    // ถ้าไม่ได้เลือกวิชามา ให้ใช้วิชาหลักเป็นค่าเริ่มต้น
     if (!hasExplicitSubjects) {
       const mainSubs = masterSubjects.filter((s) => {
         const g = (s.group_name || "").toUpperCase();
@@ -1159,13 +1123,15 @@ export const getBatchRanking = async (
       if (mainSubs.length > 0) {
         selectedSubIds = mainSubs.map((s) => s.id);
       } else {
-        selectedSubIds = masterSubjects.filter((s) => !s.is_su).map((s) => s.id);
+        selectedSubIds = masterSubjects
+          .filter((s) => !s.is_su)
+          .map((s) => s.id);
       }
     }
     const selectedSubSet = new Set<number>(selectedSubIds);
 
-    // 4. ตัดเกรด GPA และตรวจเช็คความสมบูรณ์ของหลักสูตร
-    const gradeSubjectsCount = masterSubjects.filter(s => !s.is_su).length;
+    // ตัดเกรด คิด GPA และเช็คว่าคะแนนครบไหม
+    const gradeSubjectsCount = masterSubjects.filter((s) => !s.is_su).length;
 
     const studentList = Object.values(studentsMap).map((student: any) => {
       let totalIndexForGPA = 0;
@@ -1175,7 +1141,10 @@ export const getBatchRanking = async (
         const rawScore = student.group_raw_scores[grp.groupId];
         if (rawScore !== undefined) {
           if (!grp.is_su) {
-            const percent = grp.group_max_score > 0 ? (rawScore / grp.group_max_score) * 100 : 0;
+            const percent =
+              grp.group_max_score > 0
+                ? (rawScore / grp.group_max_score) * 100
+                : 0;
             let assignedGrade = criteria[criteria.length - 1];
             for (const c of criteria) {
               if (percent >= Number(c.min_percent)) {
@@ -1183,7 +1152,10 @@ export const getBatchRanking = async (
                 break;
               }
             }
-            const gradePoint = Math.min(4.0, Math.max(0, Number(assignedGrade.grade_point) || 0));
+            const gradePoint = Math.min(
+              4.0,
+              Math.max(0, Number(assignedGrade.grade_point) || 0),
+            );
             const indexValue = grp.credit * gradePoint;
             totalIndexForGPA += indexValue;
             totalCreditForGPA += grp.credit;
@@ -1191,10 +1163,11 @@ export const getBatchRanking = async (
         }
       });
 
-      const rawGpa = totalCreditForGPA > 0 ? totalIndexForGPA / totalCreditForGPA : 0;
+      const rawGpa =
+        totalCreditForGPA > 0 ? totalIndexForGPA / totalCreditForGPA : 0;
       student.gpa = Math.min(4.0, Math.max(0, rawGpa)).toFixed(2);
 
-      // คำนวณคะแนนตัดสิน Tie-Break ตามวิชาที่เลือก
+      // คิดคะแนนตัดสินจากวิชาที่เลือก
       let tbScore = 0;
       let tbMaxScore = 0;
       let selectedScoredCount = 0;
@@ -1213,51 +1186,74 @@ export const getBatchRanking = async (
       student.tieBreakMaxScore = tbMaxScore;
       student.scoredSubjectsCount = selectedScoredCount;
 
-      // ตรวจสอบความสมบูรณ์: นักเรียนมีคะแนนครบทุกวิชาหรือไม่
-      // หากมีคะแนนไม่ถึง 80% ของวิชาทั้งหมดในหลักสูตร ถือว่าคะแนนยังไม่สมบูรณ์
-      student.is_completed = student.scored_subjects_count >= Math.max(1, gradeSubjectsCount - 2);
+      // เช็คว่ามีคะแนนครบทุกวิชาไหม
+      student.is_completed =
+        student.scored_subjects_count >= Math.max(1, gradeSubjectsCount - 2);
       student.completion_text = `${student.scored_subjects_count}/${gradeSubjectsCount}`;
 
       delete student.group_raw_scores;
       return student;
     });
 
-    // 5. จัดเรียงลำดับ (Sorting Strategy):
-    // - คนที่คะแนนครบ (is_completed = true) ได้รับการจัดอันดับ 1 ถึง N
-    // - คนที่คะแนนไม่ครบ (เช่น มีแค่ 1 วิชา) ถูกผลักไปอยู่ท้ายตาราง ไม่ให้มาแย่งที่ 1
+    // จัดลำดับ: คนที่คะแนนครบมาก่อน เรียงตาม GPA และวิชาตัดสิน
     studentList.sort((a: any, b: any) => {
-      // 1. คนที่คะแนนครบมาก่อน
+      // คนที่คะแนนครบมาก่อน
       if (a.is_completed !== b.is_completed) {
         return a.is_completed ? -1 : 1;
       }
 
       if (a.is_completed) {
-        // 2. เรียงตาม GPA สูงสุด
+        // เรียงตาม GPA สูงสุด
         const gpaDiff = Number(b.gpa) - Number(a.gpa);
         if (Math.abs(gpaDiff) > 0.0001) return gpaDiff;
 
-        // 3. ปลดล็อคด้วยคะแนนวิชาที่เลือก
+        // ถ้าเกรดเท่ากัน ใช้คะแนนวิชาที่เลือกมาตัดสิน
         if (selectedSubSet.size > 0) {
           const tbDiff = b.tieBreakScore - a.tieBreakScore;
           if (Math.abs(tbDiff) > 0.001) return tbDiff;
         }
 
-        return 0; // ห้ามใช้ student_code ตัดสิน
+        return 0;
       } else {
-        // คนไม่ครบ เรียงตามคะแนนรวม
+        // คนที่คะแนนไม่ครบ เรียงตามคะแนนรวม
         return b.total_raw_score - a.total_raw_score;
       }
     });
 
-    // 6. กำหนดอันดับและตรวจจับกลุ่มซ้ำ (Tied Groups Detection)
+    // กำหนดอันดับและหาคนที่คะแนนเท่ากัน
     const GROUP_PALETTES = [
-      { bg: '#fffbe6', border: '#fa8c16', text: '#d46b08', label: 'สีส้มทอง' },
-      { bg: '#f9f0ff', border: '#9254de', text: '#531dab', label: 'สีม่วงพาสเทล' },
-      { bg: '#e6fffb', border: '#13c2c2', text: '#006d75', label: 'สีฟ้าอมเขียวทีล' },
-      { bg: '#fff0f6', border: '#f759ab', text: '#9e1068', label: 'สีชมพูโรส' },
-      { bg: '#e6f7ff', border: '#1890ff', text: '#003a8c', label: 'สีน้ำเงินสกาย' },
-      { bg: '#fcffe6', border: '#7cb305', text: '#389e0d', label: 'สีเขียวมะนาว' },
-      { bg: '#fff2e8', border: '#ff4d4f', text: '#a8071a', label: 'สีแดงปะการัง' },
+      { bg: "#fffbe6", border: "#fa8c16", text: "#d46b08", label: "สีส้มทอง" },
+      {
+        bg: "#f9f0ff",
+        border: "#9254de",
+        text: "#531dab",
+        label: "สีม่วงพาสเทล",
+      },
+      {
+        bg: "#e6fffb",
+        border: "#13c2c2",
+        text: "#006d75",
+        label: "สีฟ้าอมเขียวทีล",
+      },
+      { bg: "#fff0f6", border: "#f759ab", text: "#9e1068", label: "สีชมพูโรส" },
+      {
+        bg: "#e6f7ff",
+        border: "#1890ff",
+        text: "#003a8c",
+        label: "สีน้ำเงินสกาย",
+      },
+      {
+        bg: "#fcffe6",
+        border: "#7cb305",
+        text: "#389e0d",
+        label: "สีเขียวมะนาว",
+      },
+      {
+        bg: "#fff2e8",
+        border: "#ff4d4f",
+        text: "#a8071a",
+        label: "สีแดงปะการัง",
+      },
     ];
 
     const completedStudents = studentList.filter((s: any) => s.is_completed);
@@ -1269,7 +1265,9 @@ export const getBatchRanking = async (
       gpaMap.get(s.gpa)!.push(s);
     });
 
-    const sortedGpas = Array.from(gpaMap.keys()).sort((a, b) => Number(b) - Number(a));
+    const sortedGpas = Array.from(gpaMap.keys()).sort(
+      (a, b) => Number(b) - Number(a),
+    );
     const tiedGroupsList: any[] = [];
     let groupCounter = 0;
 
@@ -1277,7 +1275,8 @@ export const getBatchRanking = async (
       const cluster = gpaMap.get(gpa)!;
       if (cluster.length > 1) {
         groupCounter++;
-        const palette = GROUP_PALETTES[(groupCounter - 1) % GROUP_PALETTES.length];
+        const palette =
+          GROUP_PALETTES[(groupCounter - 1) % GROUP_PALETTES.length];
         const gId = groupCounter;
 
         cluster.forEach((s: any) => {
@@ -1297,12 +1296,12 @@ export const getBatchRanking = async (
           isResolved: false,
           minRank: 0,
           maxRank: 0,
-          studentCodes: cluster.map((s: any) => s.student_code).join(', '),
+          studentCodes: cluster.map((s: any) => s.student_code).join(", "),
         });
       }
     });
 
-    // กำหนด Rank ให้คนที่คะแนนครบ
+    // กำหนดอันดับให้คนที่คะแนนครบ
     completedStudents.forEach((s: any, idx: number) => {
       s.calculatedRank = idx + 1;
       s.manualRank = idx + 1;
@@ -1311,15 +1310,16 @@ export const getBatchRanking = async (
       if (s.isTiedGpa) {
         const cluster = gpaMap.get(s.gpa)!;
         const sameScoreCount = cluster.filter(
-          (other: any) => Math.abs(other.tieBreakScore - s.tieBreakScore) <= 0.001
+          (other: any) =>
+            Math.abs(other.tieBreakScore - s.tieBreakScore) <= 0.001,
         ).length;
 
         if (selectedSubSet.size === 0) {
           s.isTrulyTied = true;
-          s.tieBreakReason = `⚠️ เกรดเท่ากัน (กรุณาติ๊กเลือกวิชาด้านบนเพื่อตัดสิน)`;
+          s.tieBreakReason = `เกรดเท่ากัน (กรุณาเลือกวิชาด้านบนเพื่อตัดสิน)`;
         } else if (sameScoreCount > 1) {
           s.isTrulyTied = true;
-          s.tieBreakReason = `⚠️ คะแนนวิชาที่เลือกเท่ากัน (${s.tieBreakScore.toFixed(1)}) ติ๊กเลือกวิชาเพิ่มเพื่อตัดสิน`;
+          s.tieBreakReason = `คะแนนวิชาที่เลือกเท่ากัน (${s.tieBreakScore.toFixed(1)}) เลือกวิชาเพิ่มเพื่อตัดสิน`;
         } else {
           s.tieBreakReason = `เกรด ${s.gpa} (ชนะด้วยคะแนนวิชาที่เลือก: ${s.tieBreakScore.toFixed(1)} / ${s.tieBreakMaxScore})`;
         }
@@ -1328,22 +1328,24 @@ export const getBatchRanking = async (
       }
     });
 
-    // กำหนดสถานะให้คนที่ไม่ครบ (Incomplete)
+    // กำหนดสถานะให้คนที่คะแนนไม่ครบ
     incompleteStudents.forEach((s: any) => {
       s.calculatedRank = null;
       s.manualRank = null;
       s.isTiedGpa = false;
       s.isTrulyTied = false;
-      s.tieBreakReason = `⚠️ คะแนนยังไม่สมบูรณ์ (มีคะแนนเพียง ${s.scored_subjects_count}/${gradeSubjectsCount} วิชา - ไม่นำมาจัดอันดับ)`;
+      s.tieBreakReason = `คะแนนยังไม่ครบ (มีคะแนนเพียง ${s.scored_subjects_count}/${gradeSubjectsCount} วิชา - ไม่นำมาจัดอันดับ)`;
     });
 
-    // อัปเดต minRank, maxRank และ isResolved สำหรับ tiedGroups
+    // สรุปข้อมูลกลุ่มที่คะแนนเท่ากัน
     tiedGroupsList.forEach((tg) => {
-      const members = completedStudents.filter((s: any) => s.tiedGroupId === tg.groupId);
+      const members = completedStudents.filter(
+        (s: any) => s.tiedGroupId === tg.groupId,
+      );
       if (members.length > 0) {
         tg.minRank = Math.min(...members.map((m: any) => m.manualRank));
         tg.maxRank = Math.max(...members.map((m: any) => m.manualRank));
-        tg.studentCodes = members.map((m: any) => m.student_code).join(', ');
+        tg.studentCodes = members.map((m: any) => m.student_code).join(", ");
         tg.isResolved = !members.some((m: any) => m.isTrulyTied);
       }
     });
@@ -1369,27 +1371,16 @@ export const getBatchRanking = async (
     });
   } catch (error) {
     console.error("Error calculating batch ranking:", error);
-    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ" });
+    res
+      .status(500)
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ" });
   }
 };
 
-/**
- * 🌟 คำนวณการจัดลำดับสำหรับการเลือกลงหน่วย (Unit Selection Ranking)
- * สูตรการคำนวณ:
- * 1. แต่ละกลุ่มวิชา/วิชา:
- *    - คะแนนดิบ (raw_score) = ผลรวมคะแนนดิบของวิชาในกลุ่ม (กรณีวิชาที่เมิร์จกัน)
- *    - คะแนนคูณหน่วยกิต (weighted_score) = คะแนนดิบ * หน่วยกิต
- * 2. คะแนนรวมทั้งหมด (total_weighted_score) = ผลรวมของคะแนนคูณหน่วยกิตทุกวิชา
- * 3. คะแนนความประพฤติ (behavior_score) ดึงมาจากตาราง student_summary_scores (ค่าเริ่มต้น 200)
- * 4. คิดเป็นร้อยละ 80 (academic_score_80) = (คะแนนรวมทั้งหมด / คะแนนเต็มรวมคูณหน่วยกิต) * 80
- * 5. คะแนนความประพฤติคิดเป็นร้อยละ 20 (behavior_score_20) = (คะแนนความประพฤติ / คะแนนเต็มความประพฤติ) * 20
- * 6. คะแนนรวมสุทธิ (final_score) = ร้อยละ 80 + ร้อยละ 20
- * 7. เรียงลำดับ (Rank 1 ถึง N) จากคะแนนรวมสุทธิ (final_score) จากมากไปน้อย
- * 8. การคำนวณทั้งหมดทำที่แบ็กเอนด์ แสดงทศนิยม 4 ตำแหน่ง
- */
+// 12. จัดอันดับสำหรับการเลือกลงหน่วย (สูตร 80/20 ทศนิยม 4 ตำแหน่ง)
 export const getUnitSelectionRanking = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const batchId = req.query.batch_id || req.body?.batch_id;
@@ -1447,7 +1438,7 @@ export const getUnitSelectionRanking = async (
       return;
     }
 
-    // 1. จัดกลุ่มวิชา
+    // จัดกลุ่มวิชา
     const groupsMap: Record<number, any> = {};
     const studentsMap: Record<number, any> = {};
 
@@ -1486,7 +1477,8 @@ export const getUnitSelectionRanking = async (
           first_name: row.first_name || "",
           last_name: row.last_name || "",
           affiliation: row.affiliation || "",
-          full_name: `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
+          full_name:
+            `${row.rank_name || ""} ${row.first_name || ""} ${row.last_name || ""}`.trim(),
           behavior_score:
             row.behavior_score !== null && row.behavior_score !== undefined
               ? Number(row.behavior_score)
@@ -1500,7 +1492,8 @@ export const getUnitSelectionRanking = async (
       if (row.raw_score !== null && row.raw_score !== undefined) {
         const score = Number(row.raw_score);
         st.subject_raw_scores[row.subject_id] = score;
-        st.group_raw_scores[row.group_id] = (st.group_raw_scores[row.group_id] || 0) + score;
+        st.group_raw_scores[row.group_id] =
+          (st.group_raw_scores[row.group_id] || 0) + score;
       }
     });
 
@@ -1528,12 +1521,15 @@ export const getUnitSelectionRanking = async (
       };
     });
 
-    // เรียงวิชาจากวิชาแรกไปวิชาท้ายสุด (เช่น M01, M02, ..., M21) ตามลำดับธรรมชาติ
+    // เรียงชื่อวิชา
     subjectGroups.sort((a: any, b: any) => {
-      return a.groupName.localeCompare(b.groupName, undefined, { numeric: true, sensitivity: 'base' });
+      return a.groupName.localeCompare(b.groupName, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
     });
 
-    // คำนวณคะแนนเต็มรวมคูณหน่วยกิต (total_max_weighted)
+    // คิดคะแนนเต็มรวมคูณหน่วยกิต
     let totalMaxWeighted = 0;
     let totalCredit = 0;
 
@@ -1544,15 +1540,17 @@ export const getUnitSelectionRanking = async (
       }
     });
 
-    // ตรวจสอบคะแนนเต็มความประพฤติ (ปกติ 200)
+    // ตรวจสอบคะแนนเต็มความประพฤติ
     let maxBehaviorScore = 200;
     const allStudentsList = Object.values(studentsMap);
-    const hasScoreOver100 = allStudentsList.some((s: any) => s.behavior_score > 100);
+    const hasScoreOver100 = allStudentsList.some(
+      (s: any) => s.behavior_score > 100,
+    );
     if (!hasScoreOver100 && allStudentsList.length > 0) {
       maxBehaviorScore = 100;
     }
 
-    // 2. คำนวณคะแนนของนักเรียนแต่ละคนตามสูตร
+    // คำนวณคะแนนตามสูตร 80/20
     const processedStudents = allStudentsList.map((st: any) => {
       let totalWeightedScore = 0;
       const groupScores: Record<number, any> = {};
@@ -1562,7 +1560,8 @@ export const getUnitSelectionRanking = async (
         const credit = grp.credit;
         const weightedScore = rawScore * credit;
         const maxScore = Number(grp.group_max_score) || 0;
-        const maxWeightedScore = Number(grp.group_max_weighted) || (maxScore * credit);
+        const maxWeightedScore =
+          Number(grp.group_max_weighted) || maxScore * credit;
 
         if (credit > 0 && !grp.is_su) {
           totalWeightedScore += weightedScore;
@@ -1586,13 +1585,13 @@ export const getUnitSelectionRanking = async (
 
       const behaviorScore = Number(st.behavior_score) || 0;
 
-      // ช่อง 80% ของคะแนนรวม: เอาคะแนนรวมทั้งหมดคูณ 0.80 โดยตรง
+      // สัดส่วนคะแนนเรียน 80%
       const academicScore80 = totalWeightedScore * 0.8;
 
-      // ช่อง 20% ของคะแนนประพฤติ: เอาคะแนนความประพฤติคูณ 0.20 โดยตรง (เช่น 200 * 0.20 = 40.0000, 190 * 0.20 = 38.0000)
+      // สัดส่วนคะแนนความประพฤติ 20%
       const behaviorScore20 = behaviorScore * 0.2;
 
-      // คะแนนรวมสุทธิ: (คะแนนรวมทั้งหมด * 0.80) + (คะแนนประพฤติ * 0.20)
+      // รวมคะแนนสุทธิ 80% + 20%
       const finalScore = academicScore80 + behaviorScore20;
 
       return {
@@ -1619,7 +1618,7 @@ export const getUnitSelectionRanking = async (
       };
     });
 
-    // 3. เรียงลำดับจากคะแนนรวมสุทธิ (final_score) มากไปหาน้อย
+    // เรียงลำดับคะแนนรวมสุทธิจากมากไปน้อย
     processedStudents.sort((a: any, b: any) => {
       const diff = b.final_score - a.final_score;
       if (Math.abs(diff) > 0.000001) return diff;
@@ -1628,7 +1627,7 @@ export const getUnitSelectionRanking = async (
       return b.behavior_score - a.behavior_score;
     });
 
-    // กำหนด Rank 1 ถึง N
+    // กำหนดอันดับ 1 ถึง N
     processedStudents.forEach((st: any, idx: number) => {
       st.rank = idx + 1;
     });
@@ -1665,5 +1664,3 @@ export const getUnitSelectionRanking = async (
     });
   }
 };
-
-

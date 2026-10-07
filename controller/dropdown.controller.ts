@@ -76,7 +76,6 @@ export const getBatchesByCourse = async (
 };
 
 // 3. ดึงข้อมูลรายวิชา (กรองตาม batch_id) พร้อมคะแนนเต็ม
-// 3. ดึงข้อมูลรายวิชา (กรองตาม batch_id) พร้อมคะแนนเต็ม
 export const getSubjectsByBatch = async (
   req: Request,
   res: Response,
@@ -94,7 +93,7 @@ export const getSubjectsByBatch = async (
         sub.id AS subject_id, 
         sub.subject_name, 
         sub.is_su,
-        sub.group_id,     -- 🌟 เพิ่มบรรทัดนี้เข้ามาครับ! 🌟
+        sub.group_id, 
         sg.group_name,
         COALESCE(sbs.max_score, 0) AS max_score
       FROM subjects sub
@@ -105,7 +104,7 @@ export const getSubjectsByBatch = async (
     `;
     const [rows]: any = await conn.query(sql, [batchId]);
     
-    // แปลง Buffer (TINYINT) ให้เป็น Boolean (ถ้าจำเป็น)
+    // แปลง Buffer (TINYINT) ให้เป็น Boolean 
     const formattedRows = rows.map((row: any) => ({
       ...row,
       is_su: Boolean(row.is_su)
@@ -164,7 +163,7 @@ export const getSubjectGroupsByBatch = async (
   }
 
   try {
-    // อ้างอิงจากโครงสร้างตาราง subject_groups ของคุณ
+    // อ้างอิงจากโครงสร้างตาราง subject_groups 
     const sql = `
       SELECT id, group_name, credits 
       FROM subject_groups 

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { conn } from "../dbconn";
-import bcrypt from "bcrypt"; // ถ้าตอนบันทึกรหัสคุณใช้ bcrypt เข้ารหัสไว้
-import jwt from "jsonwebtoken"; // สำหรับสร้าง Token
+import bcrypt from "bcrypt"; 
+import jwt from "jsonwebtoken"; 
 
 export const studentLogin = async (
   req: Request,
@@ -39,7 +39,7 @@ export const studentLogin = async (
 
     const student = rows[0];
 
-    // 2. ตรวจสอบรหัสผ่าน (รองรับทั้ง bcrypt และ plain text พร้อม auto-upgrade)
+    // 2. ตรวจสอบรหัสผ่าน 
     let isMatch = false;
     const isBcrypt =
       typeof student.password === "string" &&
@@ -49,7 +49,7 @@ export const studentLogin = async (
       isMatch = await bcrypt.compare(password, student.password);
     } else {
       isMatch = password === student.password;
-      // หากรหัสเดิมในฐานข้อมูลยังเป็น plain text และนักเรียนล็อกอินสำเร็จ ให้อัปเกรดเป็น bcrypt อัตโนมัติทันที
+      // รหัสเดิมในฐานข้อมูลยังเป็น plain text และนักเรียนล็อกอินสำเร็จ ให้อัปเกรดเป็น bcrypt อัตโนมัติทันที
       if (isMatch) {
         try {
           const hashedPassword = await bcrypt.hash(password, 10);
@@ -71,7 +71,7 @@ export const studentLogin = async (
     }
 
     // 3. สร้าง Token เพื่อให้นักเรียนเอาไปใช้ดูคะแนน
-    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
 
     const token = jwt.sign(
       {
@@ -108,7 +108,6 @@ export const studentLogin = async (
 };
 
 import { logAdminActivity } from "../utils/activityLogger";
-
 export const adminLogin = async (
   req: Request,
   res: Response,
@@ -169,7 +168,7 @@ export const adminLogin = async (
     }
 
     // 4. สร้าง Token ให้แอดมินเอาไปใช้จัดการระบบ
-    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
 
     const adminUsername = admin.username || "admin";
     const adminRole = admin.role || "admin";

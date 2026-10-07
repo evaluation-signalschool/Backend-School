@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
-import { conn } from "../dbconn"; // เรียกใช้ connection pool ที่เราสร้างไว้
-
+import { conn } from "../dbconn"; 
 export const getGroupedCourses = async (
   req: Request,
   res: Response,
@@ -92,9 +91,9 @@ export const addCourse = async (req: Request, res: Response): Promise<void> => {
     `;
     const [existingCourses]: any = await conn.query(checkSql, [normalizedNewName]);
 
-    // 3. ถ้าเจอว่ามีชื่อหลักสูตรนี้ (ที่ format คล้ายกัน) อยู่ในระบบแล้ว
+    // 3. ถ้าเจอว่ามีชื่อหลักสูตรนี้ อยู่ในระบบแล้ว
     if (existingCourses.length > 0) {
-      // เช็คว่า ปีหลักสูตร ซ้ำด้วยไหม
+      // เช็คว่า ปีหลักสูตรซ้ำ
       const isDuplicateYear = existingCourses.some((c: any) => c.curriculum_year == curriculum_year);
       
       if (isDuplicateYear) {
@@ -107,8 +106,6 @@ export const addCourse = async (req: Request, res: Response): Promise<void> => {
       }
 
       // ถ้าชื่อซ้ำ แต่คนละปี -> อนุญาตให้เพิ่มได้
-      // **Trick:** เปลี่ยนชื่อที่รับมา ให้เป็น "ชื่อเป๊ะๆ" ตามที่เคยมีใน Database 
-      // เพื่อให้เวลาแสดงผลที่ Header (ซึ่ง Group ตามชื่อ) มันจะถูกจับมัดรวมอยู่ในหมวดเดียวกันทันที
       course_name = existingCourses[0].course_name;
     }
 

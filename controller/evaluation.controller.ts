@@ -7,7 +7,7 @@ export const getAllEvaluations = async (
   res: Response,
 ): Promise<Response | void> => {
   try {
-    // ดึงข้อมูลทั้งหมดเรียงจากรายการที่สร้างล่าสุด (หรือแก้เป็น WHERE is_active = 1 ถ้าต้องการเฉพาะที่เปิดใช้งาน)
+    // ดึงข้อมูลทั้งหมดเรียงจากรายการที่สร้างล่าสุด
     const sql = `SELECT * FROM evaluation_forms ORDER BY created_at DESC;`;
 
     const [rows]: any = await conn.query(sql);
@@ -35,7 +35,7 @@ export const getGeneralEvaluation = async (
   try {
     let sql = `SELECT form_url FROM evaluation_forms WHERE batch_id = ? AND is_active = 1`;
     const params: any[] = [batchId];
-    
+
     if (targetGroup) {
       sql += ` AND target_group = ?`;
       params.push(targetGroup);
@@ -44,9 +44,9 @@ export const getGeneralEvaluation = async (
       sql += ` AND evaluation_type = ?`;
       params.push(type);
     }
-    
+
     sql += ` LIMIT 1;`;
-    
+
     const [rows]: any = await conn.query(sql, params);
 
     if (rows.length === 0) {
@@ -69,8 +69,16 @@ export const createEvaluation = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
-  // 1. รับข้อมูลโครงสร้างใหม่จาก Frontend (ตัด googleFormUrl ทิ้งไป รับ questions เข้ามาแทน)
-  const { formType, formName, formDescription, generationId, subjectId, questions, targetGroup } = req.body;
+  // 1. รับข้อมูลโครงสร้างใหม่จาก
+  const {
+    formType,
+    formName,
+    formDescription,
+    generationId,
+    subjectId,
+    questions,
+    targetGroup,
+  } = req.body;
 
   // เช็คว่ามีคำถามส่งมาด้วยไหม
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
@@ -85,7 +93,7 @@ export const createEvaluation = async (
   try {
     await connection.beginTransaction();
 
-    // 2. บันทึก "หัวฟอร์ม" ลงตาราง evaluation_forms (เอา form_url ออก)
+    // 2. บันทึก "หัวฟอร์ม" ลงตาราง evaluation_forms
     const sqlForm = `
       INSERT INTO evaluation_forms 
       (batch_id, subject_id, evaluation_type, form_name, form_description, is_active, created_at, updated_at, target_group) 
@@ -97,11 +105,10 @@ export const createEvaluation = async (
       formType,
       formName,
       formDescription || null,
-      targetGroup || 'student',
+      targetGroup || "student",
     ]);
 
-    const formId = formResult.insertId; // ได้ ID ของฟอร์มมาเพื่อใช้ผูกกับคำถาม
-
+    const formId = formResult.insertId;
     // 3. วนลูปบันทึก "คำถาม" และ "ตัวเลือก"
     for (const [index, q] of questions.entries()) {
       // 3.1 บันทึกคำถามลงตาราง evaluation_questions (รวม subject_for)
@@ -110,7 +117,12 @@ export const createEvaluation = async (
         (form_id, question_text, question_type, order_num, subject_for) 
         VALUES (?, ?, ?, ?, ?)
       `;
-      const cleanSubjectFor = q.subject_for && q.subject_for !== 'undefined' && q.subject_for !== 'all' ? q.subject_for : null;
+      const cleanSubjectFor =
+        q.subject_for &&
+        q.subject_for !== "undefined" &&
+        q.subject_for !== "all"
+          ? q.subject_for
+          : null;
 
       const [questionResult]: any = await connection.query(sqlQuestion, [
         formId,
@@ -145,7 +157,7 @@ export const createEvaluation = async (
       }
     }
 
-    // ถ้าทุกอย่างผ่านฉลุย ให้ Commit ยืนยันการบันทึกข้อมูล
+    //  ให้ Commit ยืนยันการบันทึกข้อมูล
     await connection.commit();
     return res.status(201).json({
       success: true,
@@ -153,7 +165,7 @@ export const createEvaluation = async (
       data: { form_id: formId },
     });
   } catch (error: any) {
-    await connection.rollback(); // ถ้าระหว่างเซฟคำถามพัง ให้ยกเลิกการสร้างฟอร์มนี้ทิ้งไปเลย
+    await connection.rollback(); // ถ้าระหว่างเซฟคำถามพัง ให้ยกเลิกการสร้างฟอร์มนี้ทิ้ง
     console.error("Error createEvaluation:", error);
     return res
       .status(500)
@@ -172,7 +184,7 @@ export const getEvaluationById = async (
   try {
     const [forms]: any = await conn.query(
       `SELECT * FROM evaluation_forms WHERE id = ?`,
-      [id]
+      [id],
     );
 
     if (forms.length === 0) {
@@ -204,7 +216,7 @@ export const getEvaluationById = async (
       data: {
         form_id: form.id,
         form_name: form.form_name,
-        form_description: form.form_description || '',
+        form_description: form.form_description || "",
         evaluation_type: form.evaluation_type,
         batch_id: form.batch_id,
         subject_id: form.subject_id,
@@ -219,14 +231,21 @@ export const getEvaluationById = async (
   }
 };
 
-
 // อัปเดตข้อมูลฟอร์มประเมินและชุดคำถาม
 export const updateEvaluation = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
   const { id } = req.params;
-  const { formType, googleFormUrl, formName, formDescription, generationId, subjectId, questions } = req.body;
+  const {
+    formType,
+    googleFormUrl,
+    formName,
+    formDescription,
+    generationId,
+    subjectId,
+    questions,
+  } = req.body;
 
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
     return res
@@ -270,7 +289,7 @@ export const updateEvaluation = async (
     // หาคำถามเก่าที่อยู่ในฐานข้อมูลแต่ไม่ได้อยู่ใน payload (คือโดนลบออก)
     const [existingQuestions]: any = await connection.query(
       `SELECT id FROM evaluation_questions WHERE form_id = ?`,
-      [id]
+      [id],
     );
 
     let unableToDeleteCount = 0;
@@ -278,7 +297,10 @@ export const updateEvaluation = async (
     for (const eq of existingQuestions) {
       if (!keptQuestionIds.includes(eq.id)) {
         try {
-          await connection.query(`DELETE FROM evaluation_questions WHERE id = ?`, [eq.id]);
+          await connection.query(
+            `DELETE FROM evaluation_questions WHERE id = ?`,
+            [eq.id],
+          );
         } catch (delErr: any) {
           if (delErr.code === "ER_ROW_IS_REFERENCED_2") {
             // ลบไม่ได้เพราะมีคนตอบแล้ว ปล่อยผ่านไปแต่จำไว้เพื่อไปแจ้งเตือน
@@ -293,17 +315,32 @@ export const updateEvaluation = async (
     // 3. วนลูป อัปเดต หรือ เพิ่ม คำถาม
     for (const [index, q] of questions.entries()) {
       let questionId = q.id;
-      const cleanSubjectFor = q.subject_for && q.subject_for !== 'undefined' && q.subject_for !== 'all' ? q.subject_for : null;
+      const cleanSubjectFor =
+        q.subject_for &&
+        q.subject_for !== "undefined" &&
+        q.subject_for !== "all"
+          ? q.subject_for
+          : null;
 
       if (questionId) {
         // อัปเดตคำถามเดิม
         await connection.query(
           `UPDATE evaluation_questions SET question_text = ?, question_type = ?, order_num = ?, subject_for = ? WHERE id = ? AND form_id = ?`,
-          [q.question_text, q.question_type || "choice", index + 1, cleanSubjectFor, questionId, id]
+          [
+            q.question_text,
+            q.question_type || "choice",
+            index + 1,
+            cleanSubjectFor,
+            questionId,
+            id,
+          ],
         );
-        
-        // ลบตัวเลือกเก่าทิ้งทั้งหมดของคำถามนี้ (ปลอดภัยเพราะไม่มี FK โยงมาหา)
-        await connection.query(`DELETE FROM evaluation_choices WHERE question_id = ?`, [questionId]);
+
+        // ลบตัวเลือกเก่าทิ้งทั้งหมดของคำถามนี้
+        await connection.query(
+          `DELETE FROM evaluation_choices WHERE question_id = ?`,
+          [questionId],
+        );
       } else {
         // สร้างคำถามใหม่
         const sqlQuestion = `
@@ -322,7 +359,11 @@ export const updateEvaluation = async (
       }
 
       // 4. เพิ่มตัวเลือก (เฉพาะ choice หรือ dropdown พิมพ์เอง)
-      if ((q.question_type === "choice" || q.question_type === "dropdown") && q.choices && Array.isArray(q.choices)) {
+      if (
+        (q.question_type === "choice" || q.question_type === "dropdown") &&
+        q.choices &&
+        Array.isArray(q.choices)
+      ) {
         const choiceValues = q.choices.map((c: any, cIndex: number) => [
           questionId,
           c.choice_text,
@@ -347,9 +388,7 @@ export const updateEvaluation = async (
       finalMessage += ` (ไม่สามารถลบคำถามบางข้อได้เนื่องจากมีนักเรียนตอบแล้ว แต่บันทึกการแก้ไขคำถามอื่นๆ สำเร็จ)`;
     }
 
-    return res
-      .status(200)
-      .json({ success: true, message: finalMessage });
+    return res.status(200).json({ success: true, message: finalMessage });
   } catch (error: any) {
     await connection.rollback();
     console.error("Error updateEvaluation:", error);
@@ -371,7 +410,7 @@ export const deleteEvaluation = async (
   try {
     const [result]: any = await conn.query(
       `DELETE FROM evaluation_forms WHERE id = ?`,
-      [id]
+      [id],
     );
 
     if (result.affectedRows === 0) {
@@ -386,7 +425,8 @@ export const deleteEvaluation = async (
     if (error.code === "ER_ROW_IS_REFERENCED_2") {
       return res.status(400).json({
         success: false,
-        message: "ไม่สามารถลบแบบฟอร์มนี้ได้ เนื่องจากมีนักเรียนตอบแบบประเมินแล้ว",
+        message:
+          "ไม่สามารถลบแบบฟอร์มนี้ได้ เนื่องจากมีนักเรียนตอบแบบประเมินแล้ว",
       });
     }
     return res
@@ -395,10 +435,7 @@ export const deleteEvaluation = async (
   }
 };
 
-// ==========================================
 // ส่วนที่ต้องเพิ่มใหม่ สำหรับฝั่งนักเรียน
-// ==========================================
-
 // 1. ดึงข้อมูลฟอร์มพร้อมชุดคำถามและตัวเลือก (GET)
 export const getEvaluationQuestions = async (
   req: Request,
@@ -407,7 +444,7 @@ export const getEvaluationQuestions = async (
   const { batchId } = req.params;
   const { type } = req.query;
   try {
-    // 1. หา form_id โดยดึงฟอร์มล่าสุดของรุ่น และประเภทนั้นๆ (ไม่สนวิชาแล้ว)
+    // 1. หา form_id โดยดึงฟอร์มล่าสุดของรุ่น และประเภทนั้นๆ
     let sqlForm = `SELECT * FROM evaluation_forms WHERE batch_id = ? AND evaluation_type = ? AND is_active = 1 ORDER BY id DESC LIMIT 1`;
     let queryParams: any[] = [batchId, type];
 
@@ -439,7 +476,7 @@ export const getEvaluationQuestions = async (
       data: {
         form_id: form.id,
         form_name: form.form_name,
-        form_description: form.form_description || '',
+        form_description: form.form_description || "",
         evaluation_type: form.evaluation_type,
         questions: questions,
       },
@@ -452,26 +489,24 @@ export const getEvaluationQuestions = async (
   }
 };
 
-// 2. บันทึกคำตอบที่นักเรียนส่งมา (POST)
+// 2. บันทึกคำตอบที่นักเรียนส่งมา
 export const submitEvaluationAnswer = async (
   req: Request,
   res: Response,
 ): Promise<Response | void> => {
-  // 1. รับ student_id ที่ส่งมาจาก Frontend (ถ้าไม่มี เช่น ครู/ผู้ใช้ทั่วไป ให้เป็น null ได้)
+  // 1. รับ student_id ที่ส่งมาจาก Frontend
   const { studentId, formId, subjectId, instructorName, answers } = req.body;
 
   // ตรวจสอบข้อมูลเบื้องต้น
   if (!formId || !answers || !Array.isArray(answers)) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "ข้อมูลที่ส่งมาไม่ครบถ้วน (ต้องการ formId, answers)",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "ข้อมูลที่ส่งมาไม่ครบถ้วน (ต้องการ formId, answers)",
+    });
   }
-
-  // 🛡️ ป้องกัน XSS: ตรวจจับสคริปต์อันตรายในคำตอบ
-  const xssPattern = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>|<[^>]*script|javascript:|onerror\s*=|onload\s*|<iframe|<embed|<object/i;
+  //  ป้องกัน XSS: ตรวจจับสคริปต์อันตรายในคำตอบ
+  const xssPattern =
+    /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>|<[^>]*script|javascript:|onerror\s*=|onload\s*|<iframe|<embed|<object/i;
   for (let ans of answers) {
     if (ans.comment && xssPattern.test(String(ans.comment))) {
       return res.status(400).json({
@@ -490,14 +525,14 @@ export const submitEvaluationAnswer = async (
     if (subjectId && !isNaN(Number(subjectId)) && Number(subjectId) > 0) {
       const [subCheck]: any = await connection.query(
         `SELECT id FROM subjects WHERE id = ?`,
-        [Number(subjectId)]
+        [Number(subjectId)],
       );
       if (subCheck.length > 0) {
         cleanSubjectId = Number(subjectId);
       }
     }
 
-    // 2. บันทึกใบเสร็จ (evaluation_submissions)
+    // 2. บันทึก(evaluation_submissions)
     const sqlSubmission = `
       INSERT INTO evaluation_submissions (student_id, form_id, subject_id, instructor_name, created_at)
       VALUES (?, ?, ?, ?, NOW())
@@ -558,7 +593,7 @@ export const submitEvaluationAnswer = async (
   }
 };
 
-// 3. ดึงข้อมูลผู้ที่ตอบแบบฟอร์มแล้วพร้อมคำตอบแต่ละข้อ (GET)
+// 3. ดึงข้อมูลผู้ที่ตอบแบบฟอร์มแล้วพร้อมคำตอบแต่ละข้อ
 export const getFormSubmissions = async (
   req: Request,
   res: Response,
@@ -569,11 +604,13 @@ export const getFormSubmissions = async (
     // 1. ดึงข้อมูลคำถามของฟอร์มนี้ เพื่อทำเป็น Header คอลัมน์
     const [questions]: any = await conn.query(
       `SELECT id, question_text, order_num FROM evaluation_questions WHERE form_id = ? ORDER BY order_num ASC`,
-      [formId]
+      [formId],
     );
 
     if (questions.length === 0) {
-       return res.status(200).json({ success: true, data: { questions: [], submissions: [] } });
+      return res
+        .status(200)
+        .json({ success: true, data: { questions: [], submissions: [] } });
     }
 
     // 2. ดึงข้อมูลผู้ส่ง (Submissions)
@@ -604,7 +641,10 @@ export const getFormSubmissions = async (
 
     sqlSubmissions += ` ORDER BY s.created_at DESC`;
 
-    const [submissionsRaw]: any = await conn.query(sqlSubmissions, paramsSubmissions);
+    const [submissionsRaw]: any = await conn.query(
+      sqlSubmissions,
+      paramsSubmissions,
+    );
 
     // 3. ดึงคำตอบทั้งหมดของฟอร์มนี้
     const sqlAnswers = `
@@ -622,29 +662,35 @@ export const getFormSubmissions = async (
     // 4. ประกอบร่างข้อมูล (Transform Data)
     const submissions = submissionsRaw.map((sub: any) => {
       // ค้นหาคำตอบของ submission นี้
-      const userAnswers = answersRaw.filter((a: any) => a.submission_id === sub.submission_id);
-      
+      const userAnswers = answersRaw.filter(
+        (a: any) => a.submission_id === sub.submission_id,
+      );
+
       const answerDict: any = {};
       for (const ans of userAnswers) {
         // ล้างแท็กและสคริปต์เพื่อความปลอดภัยต่อ XSS ก่อนส่งไปให้ Frontend แสดงผล
         const safeComment = ans.comment
           ? String(ans.comment)
-              .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+              .replace(
+                /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+                "",
+              )
               .replace(/<[^>]+>/g, "")
               .trim()
           : null;
         // ให้ค่าคะแนนเป็นหลัก ถ้าไม่มีคะแนนให้แสดง comment (สำหรับ text type)
-        answerDict[`q_${ans.question_id}`] = ans.score_value !== null ? ans.score_value : (safeComment || '-');
+        answerDict[`q_${ans.question_id}`] =
+          ans.score_value !== null ? ans.score_value : safeComment || "-";
       }
 
       return {
         id: sub.submission_id,
         submittedAt: sub.submitted_at,
-        name: `${sub.rank_name || ''} ${sub.first_name || ''} ${sub.last_name || ''}`.trim(),
+        name: `${sub.rank_name || ""} ${sub.first_name || ""} ${sub.last_name || ""}`.trim(),
         studentCode: sub.student_code,
         instructorName: sub.instructor_name,
-        courseName: sub.subject_name || sub.form_name || '-',
-        answers: answerDict
+        courseName: sub.subject_name || sub.form_name || "-",
+        answers: answerDict,
       };
     });
 
@@ -652,15 +698,16 @@ export const getFormSubmissions = async (
       success: true,
       data: {
         questions: questions,
-        submissions: submissions
-      }
+        submissions: submissions,
+      },
     });
-
   } catch (error: any) {
     console.error("Error getFormSubmissions:", error);
     return res
       .status(500)
-      .json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลแบบฟอร์ม" });
+      .json({
+        success: false,
+        message: "เกิดข้อผิดพลาดในการดึงข้อมูลแบบฟอร์ม",
+      });
   }
 };
-
