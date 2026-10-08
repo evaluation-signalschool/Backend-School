@@ -172,3 +172,26 @@ export const optionalAdmin = (
   next();
 };
 
+// Middleware เสริม: ตรวจสอบ Token นักเรียน/ทั่วไป แบบยืดหยุ่น (Optional)
+export const optionalToken = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const decoded = jwt.verify(token, secretKey) as any;
+    req.user = decoded;
+  } catch (error) {
+    // หาก token หมดอายุหรือผิดพลาด ปล่อยผ่าน
+  }
+  next();
+};
+
