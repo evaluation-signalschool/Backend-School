@@ -764,26 +764,37 @@ export const saveBatchScores = async (
       return;
     }
 
-    // เตรียมข้อมูลสำหรับบันทึก
-    const values = scores.map((student: any) => [
-      batch_id,
-      student.student_id,
-      student.training_time_score !== undefined &&
-      student.training_time_score !== null &&
-      student.training_time_score !== ""
-        ? Number(student.training_time_score)
-        : null,
-      student.exam_time_score !== undefined &&
-      student.exam_time_score !== null &&
-      student.exam_time_score !== ""
-        ? Number(student.exam_time_score)
-        : null,
-      student.behavior_score !== undefined &&
-      student.behavior_score !== null &&
-      student.behavior_score !== ""
-        ? Number(student.behavior_score)
-        : null,
-    ]);
+    // เตรียมข้อมูลสำหรับบันทึก และจำกัดค่าคะแนนให้อยู่ในเกณฑ์ที่ถูกต้อง
+    const values = scores.map((student: any) => {
+      const trainingScore =
+        student.training_time_score !== undefined &&
+        student.training_time_score !== null &&
+        student.training_time_score !== ""
+          ? Math.max(0, Math.min(100, Number(student.training_time_score)))
+          : null;
+
+      const examScore =
+        student.exam_time_score !== undefined &&
+        student.exam_time_score !== null &&
+        student.exam_time_score !== ""
+          ? Math.max(0, Math.min(100, Number(student.exam_time_score)))
+          : null;
+
+      const behaviorScore =
+        student.behavior_score !== undefined &&
+        student.behavior_score !== null &&
+        student.behavior_score !== ""
+          ? Math.max(0, Math.min(200, Number(student.behavior_score)))
+          : null;
+
+      return [
+        batch_id,
+        student.student_id,
+        trainingScore,
+        examScore,
+        behaviorScore,
+      ];
+    });
 
     // บันทึกหรืออัปเดตข้อมูลคะแนนลงตาราง
     const sql = `
