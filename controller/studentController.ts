@@ -21,10 +21,10 @@ export const uploadStudent = async (
       .json({ message: "กรุณาเลือกรุ่นและอัปโหลดไฟล์ CSV" });
   }
 
-  const result: any[] = []; // แก้ไขจุดที่พิมพ์ผิดและวงเล็บเกิน
+  const result: any[] = [];
 
   fs.createReadStream(file.path)
-    // 1. เพิ่มตั้งค่า mapHeaders เพื่อทำความสะอาดอักขระซ่อนเร้น (BOM) หรือช่องว่างที่ติดมากับชื่อคอลัมน์
+    // 1. เพิ่มตั้งค่า mapHeaders เพื่อทำความสะอาดอักขระซ่อนเร้น หรือช่องว่างที่ติดมากับชื่อคอลัมน์
     .pipe(
       csv({
         mapHeaders: ({ header }) => header.trim(),
@@ -47,10 +47,16 @@ export const uploadStudent = async (
           const rawPassword: string = String(row["รหัสผ่าน"] || "1234").trim();
           const hashedPassword: string = await bcrypt.hash(rawPassword, 10);
           const affiliation: string = row["สังกัด"] || "";
-          
+
           // ดึงอีเมลและเบอร์โทรศัพท์จาก CSV (รองรับชื่อคอลัมน์หลายแบบ)
-          const email: string = row["อีเมล"] || row["Email"] || row["email"] || "";
-          const phone: string = row["เบอร์โทรศัพท์"] || row["เบอร์โทร"] || row["Phone"] || row["phone"] || "";
+          const email: string =
+            row["อีเมล"] || row["Email"] || row["email"] || "";
+          const phone: string =
+            row["เบอร์โทรศัพท์"] ||
+            row["เบอร์โทร"] ||
+            row["Phone"] ||
+            row["phone"] ||
+            "";
 
           // แกะ ยศ ชื่อ สกุล
           const fullName: string = row["ยศ - ชื่อ - สกุล"] || "";
@@ -86,7 +92,7 @@ export const uploadStudent = async (
             last_name,
             affiliation,
             email,
-            phone
+            phone,
           ]);
         }
 
@@ -134,13 +140,12 @@ export const getStudents = async (
     let query = `SELECT id, batch_id, student_code, rank_name, first_name, last_name, affiliation, email, phone FROM students`;
     let params: any[] = [];
 
-
     // ถ้ามีการเลือกรุ่นมา ให้กรองเฉพาะนักเรียนในรุ่นนั้น
     if (batch_id) {
       query += ` WHERE batch_id = ?`;
       params.push(batch_id);
     }
-    
+
     query += ` ORDER BY CAST(student_code AS UNSIGNED) ASC, id ASC`;
 
     const [rows] = await connection.execute(query, params);
@@ -161,7 +166,7 @@ export const addStudent = async (
   req: Request,
   res: Response,
 ): Promise<Response> => {
-  // รับข้อมูลจากฟอร์มกรอกทีละคน (อ้างอิงฟิลด์จาก UI)
+  // รับข้อมูลจากฟอร์มกรอกทีละคน
   const {
     batch_id, // จำเป็นต้องส่งมาจาก Frontend ด้วยเพื่อระบุรุ่น
     rank_name,
@@ -182,7 +187,10 @@ export const addStudent = async (
   }
 
   // ตรวจสอบความถูกต้องของยศ: ห้ามมีตัวเลข หรือเครื่องหมาย @
-  if (rank_name && (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))) {
+  if (
+    rank_name &&
+    (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))
+  ) {
     return res.status(400).json({
       message: "ช่องยศต้องไม่มีตัวเลขหรือเครื่องหมาย @",
     });
@@ -192,7 +200,8 @@ export const addStudent = async (
   if (
     /[0-9\u0E50-\u0E59]/.test(first_name) ||
     first_name.includes("@") ||
-    (last_name && (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
+    (last_name &&
+      (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
   ) {
     return res.status(400).json({
       message: "ชื่อและนามสกุลต้องไม่มีตัวเลขหรือสัญลักษณ์พิเศษ",
@@ -214,8 +223,8 @@ export const addStudent = async (
     let finalStudentCode = student_code;
     if (!finalStudentCode) {
       const [countResult]: any = await connection.execute(
-        'SELECT COUNT(*) as count FROM students WHERE batch_id = ?',
-        [batch_id]
+        "SELECT COUNT(*) as count FROM students WHERE batch_id = ?",
+        [batch_id],
       );
       finalStudentCode = (countResult[0].count + 1).toString();
     }
@@ -301,7 +310,10 @@ export const updateStudent = async (
   }
 
   // ตรวจสอบความถูกต้องของยศ: ห้ามมีตัวเลข หรือเครื่องหมาย @
-  if (rank_name && (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))) {
+  if (
+    rank_name &&
+    (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))
+  ) {
     return res.status(400).json({
       message: "ช่องยศต้องไม่มีตัวเลขหรือเครื่องหมาย @",
     });
@@ -309,8 +321,10 @@ export const updateStudent = async (
 
   // ตรวจสอบชื่อและนามสกุล: ห้ามมีตัวเลข หรือสัญลักษณ์ @
   if (
-    (first_name && (/[0-9\u0E50-\u0E59]/.test(first_name) || first_name.includes("@"))) ||
-    (last_name && (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
+    (first_name &&
+      (/[0-9\u0E50-\u0E59]/.test(first_name) || first_name.includes("@"))) ||
+    (last_name &&
+      (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
   ) {
     return res.status(400).json({
       message: "ชื่อและนามสกุลต้องไม่มีตัวเลขหรือสัญลักษณ์พิเศษ",
@@ -363,12 +377,7 @@ export const updateStudent = async (
     if (updatePasswordQuery) {
       updateParams.push(finalHashedPassword);
     }
-    updateParams.push(
-      affiliation || "",
-      email || "",
-      phone || "",
-      id,
-    );
+    updateParams.push(affiliation || "", email || "", phone || "", id);
 
     const [result]: any = await connection.execute(query, updateParams);
 
@@ -429,21 +438,35 @@ export const deleteStudent = async (
 
     // ดึง batch_id และข้อมูลนักเรียนก่อนที่จะลบ
     const [studentRows]: any = await connection.execute(
-      'SELECT batch_id, student_code, rank_name, first_name, last_name FROM students WHERE id = ?', 
-      [id]
+      "SELECT batch_id, student_code, rank_name, first_name, last_name FROM students WHERE id = ?",
+      [id],
     );
     if (studentRows.length === 0) {
       await connection.rollback();
-      return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการลบ" });
+      return res
+        .status(404)
+        .json({ message: "ไม่พบข้อมูลนักเรียนที่ต้องการลบ" });
     }
     const studentInfo = studentRows[0];
     const batch_id = studentInfo.batch_id;
 
     // ลบข้อมูลที่ผูกกับนักเรียนก่อน (คำขอแก้ไขข้อมูล, แบบประเมินที่เคยส่ง, คะแนน) ป้องกัน Foreign Key Constraint
-    await connection.execute(`DELETE FROM profile_edit_requests WHERE student_id = ?`, [id]);
-    await connection.execute(`DELETE FROM evaluation_submissions WHERE student_id = ?`, [id]);
-    await connection.execute(`DELETE FROM student_scores WHERE student_id = ?`, [id]);
-    await connection.execute(`DELETE FROM student_summary_scores WHERE student_id = ?`, [id]);
+    await connection.execute(
+      `DELETE FROM profile_edit_requests WHERE student_id = ?`,
+      [id],
+    );
+    await connection.execute(
+      `DELETE FROM evaluation_submissions WHERE student_id = ?`,
+      [id],
+    );
+    await connection.execute(
+      `DELETE FROM student_scores WHERE student_id = ?`,
+      [id],
+    );
+    await connection.execute(
+      `DELETE FROM student_summary_scores WHERE student_id = ?`,
+      [id],
+    );
 
     // ลบนักเรียน
     await connection.execute(`DELETE FROM students WHERE id = ?`, [id]);
@@ -451,12 +474,15 @@ export const deleteStudent = async (
     // จัดเรียงเลขที่ใหม่ให้กับนักเรียนที่เหลือในรุ่นนี้
     const [remainingStudents]: any = await connection.execute(
       `SELECT id FROM students WHERE batch_id = ? ORDER BY CAST(student_code AS UNSIGNED) ASC, id ASC`,
-      [batch_id]
+      [batch_id],
     );
 
     for (let i = 0; i < remainingStudents.length; i++) {
       const newCode = (i + 1).toString();
-      await connection.execute(`UPDATE students SET student_code = ? WHERE id = ?`, [newCode, remainingStudents[i].id]);
+      await connection.execute(
+        `UPDATE students SET student_code = ? WHERE id = ?`,
+        [newCode, remainingStudents[i].id],
+      );
     }
 
     await connection.commit();
@@ -522,7 +548,9 @@ export const resequenceStudents = async (
   } catch (error: any) {
     if (connection) await connection.rollback();
     console.error(error);
-    return res.status(500).json({ message: "เกิดข้อผิดพลาดในการจัดเรียงเลขที่" });
+    return res
+      .status(500)
+      .json({ message: "เกิดข้อผิดพลาดในการจัดเรียงเลขที่" });
   } finally {
     if (connection) connection.release();
   }

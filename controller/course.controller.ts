@@ -172,8 +172,44 @@ export const addCourse = async (req: Request, res: Response): Promise<void> => {
       .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกหลักสูตร" });
   }
 };
+const parseDateToTimestamp = (dStr: any): number | null => {
+  if (!dStr || typeof dStr !== "string" || !dStr.trim()) return null;
+  const str = dStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const parts = str.split("T")[0].split("-");
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    return new Date(y, m, d).getTime();
+  }
+  const parts = str.split(/[\/\-\.]/);
+  if (parts.length === 3) {
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    let y = parseInt(parts[2], 10);
+    if (y >= 2400) y -= 543;
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return new Date(y, m, d).getTime();
+    }
+  }
+  const dt = new Date(str);
+  return isNaN(dt.getTime()) ? null : dt.getTime();
+};
+
 export const addBatch = async (req: Request, res: Response) => {
   const { course_id, batch_name, start_date, end_date } = req.body;
+
+  if (start_date && end_date) {
+    const startTs = parseDateToTimestamp(start_date);
+    const endTs = parseDateToTimestamp(end_date);
+    if (startTs !== null && endTs !== null && endTs < startTs) {
+      return res.status(400).json({
+        success: false,
+        message: "วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น",
+      });
+    }
+  }
+
   try {
     const [result] = await conn.query(
       "INSERT INTO course_batches (course_id, batch_name, start_date, end_date) VALUES (?, ?, ?, ?)",
@@ -218,6 +254,17 @@ export const updateBatch = async (req: Request, res: Response) => {
   const { id } = req.params;
   const { batch_name, start_date, end_date } = req.body;
   
+  if (start_date && end_date) {
+    const startTs = parseDateToTimestamp(start_date);
+    const endTs = parseDateToTimestamp(end_date);
+    if (startTs !== null && endTs !== null && endTs < startTs) {
+      return res.status(400).json({
+        success: false,
+        message: "วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น",
+      });
+    }
+  }
+
   try {
     const [result]: any = await conn.query(
       "UPDATE course_batches SET batch_name = ?, start_date = ?, end_date = ? WHERE id = ?",

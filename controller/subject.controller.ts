@@ -16,10 +16,9 @@ export const getSubjectsByBatch = async (
         s.id AS subject_id,
         s.subject_name,
         s.is_su,
-        ef.form_url  -- ดึงฟิลด์ url ของฟอร์มออกมา
+        ef.form_url  
       FROM subject_groups sg
       LEFT JOIN subjects s ON sg.id = s.group_id
-      -- JOIN เพื่อหาฟอร์มของวิชานี้ ในรุ่นนี้ ที่เป็นประเภท 'instructor'
       LEFT JOIN evaluation_forms ef ON s.id = ef.subject_id 
            AND ef.batch_id = sg.batch_id 
            AND ef.evaluation_type = 'instructor'

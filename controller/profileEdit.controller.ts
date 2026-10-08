@@ -5,6 +5,7 @@ import cloudinary from "../config/cloudinary";
 import streamifier from "streamifier";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { logAdminActivity } from "../utils/activityLogger";
+import { uploadFileToGoogleDrive, isGoogleDriveConfigured } from "../services/googleDrive.service";
 
 // อัปโหลดไฟล์ไปเก็บที่ Cloudinary
 const uploadToCloudinary = (buffer: Buffer): Promise<any> => {
@@ -22,7 +23,7 @@ const uploadToCloudinary = (buffer: Buffer): Promise<any> => {
 
 // 1. นักเรียนส่งคำขอแก้ไขโปรไฟล์
 export const submitEditRequest = async (req: Request, res: Response): Promise<Response | void> => {
-    const { student_id, new_rank, new_first_name, new_last_name } = req.body;
+    const { student_id, new_rank, new_first_name, new_last_name, drive_url } = req.body;
     const file = req.file;
 
     if (!student_id) {
@@ -88,7 +89,8 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
         const student = studentRes[0];
 
         // ถ้าเปลี่ยนยศต้องแนบเอกสารหลักฐานด้วย
-        if (student.rank_name && trimmedRank && student.rank_name.trim() !== trimmedRank && !file) {
+        const hasEvidence = Boolean(file || (drive_url && drive_url.trim() !== ''));
+        if (student.rank_name && trimmedRank && student.rank_name.trim() !== trimmedRank && !hasEvidence) {
             return res.status(400).json({ message: "กรุณาแนบไฟล์เอกสารยืนยันการเลื่อนยศ" });
         }
         
@@ -102,10 +104,37 @@ export const submitEditRequest = async (req: Request, res: Response): Promise<Re
         
         let documentData = null;
         if (file) {
-            const uploadResult = await uploadToCloudinary(file.buffer);
+            if (isGoogleDriveConfigured()) {
+                try {
+                    const driveRes = await uploadFileToGoogleDrive(file.buffer, file.originalname, file.mimetype);
+                    documentData = JSON.stringify({
+                        provider: "google_drive",
+                        url: driveRes.webViewLink,
+                        file_id: driveRes.fileId,
+                        name: driveRes.name
+                    });
+                } catch (gErr) {
+                    console.error("[GoogleDrive] Upload to Google Drive failed, fallback to Cloudinary:", gErr);
+                    const uploadResult = await uploadToCloudinary(file.buffer);
+                    documentData = JSON.stringify({
+                        provider: "cloudinary",
+                        url: uploadResult.secure_url,
+                        public_id: uploadResult.public_id
+                    });
+                }
+            } else {
+                const uploadResult = await uploadToCloudinary(file.buffer);
+                documentData = JSON.stringify({
+                    provider: "cloudinary",
+                    url: uploadResult.secure_url,
+                    public_id: uploadResult.public_id
+                });
+            }
+        } else if (drive_url && drive_url.trim() !== '') {
             documentData = JSON.stringify({
-                url: uploadResult.secure_url,
-                public_id: uploadResult.public_id
+                provider: "google_drive",
+                url: drive_url.trim(),
+                name: "เอกสารแนบ (Google Drive)"
             });
         }
         
@@ -171,7 +200,9 @@ export const getAllRequests = async (req: Request, res: Response): Promise<Respo
             JOIN students s ON r.student_id = s.id
             LEFT JOIN course_batches cb ON s.batch_id = cb.id
             LEFT JOIN courses c ON cb.course_id = c.id
-            ORDER BY r.created_at DESC
+            ORDER BY 
+                CASE WHEN r.status = 'pending' THEN 0 ELSE 1 END,
+                r.created_at DESC
         `);
         return res.status(200).json(rows);
     } catch (error) {
@@ -228,19 +259,7 @@ export const updateRequestStatus = async (req: Request, res: Response): Promise<
             );
         }
         
-        // ลบไฟล์ใน Cloudinary ทิ้งเพื่อประหยัดพื้นที่
-        if (request.document_path) {
-            try {
-                const docData = JSON.parse(request.document_path);
-                if (docData && docData.public_id) {
-                    await cloudinary.uploader.destroy(docData.public_id, { resource_type: "raw" }).catch(() => {});
-                    await cloudinary.uploader.destroy(docData.public_id, { resource_type: "image" }).catch(() => {});
-                }
-            } catch (e) {
-                console.error("Error deleting from Cloudinary (might be old format):", e);
-            }
-        }
-        
+        // เก็บเอกสารหลักฐานไว้ใน Google Drive / Cloud เพื่อให้แอดมินสามารถเปิดดูย้อนหลังได้ตลอด
         await connection.commit();
 
         // บันทึกประวัติการทำงานของแอดมิน
