@@ -16,6 +16,74 @@ const GRADING_CRITERIA = [
   { grade_name: "F", grade_point: 0.0, min_percent: 0 },
 ];
 
+// ลำดับรายวิชามาตรฐานตามโครงสร้างหลักสูตร (Canonical Subject Order)
+export const CANONICAL_SUBJECT_ORDER: { [name: string]: number } = {
+  // M01
+  "การส่งกำลังและซ่อมบำรุงสายสื่อสาร": 1,
+  "การจัดหน่วยทหารสื่อสาร": 2,
+  // M02
+  "วงจรไฟฟ้า": 3,
+  // M03
+  "การสื่อสารทางยุทธวิธี": 4,
+  // M04
+  "การสื่อสารประเภทวิทยุและการสงครามอิเล็กทรอนิกส์": 5,
+  // M05
+  "การสื่อสารประเภทสาย": 6,
+  // M06
+  "ภาษาอังกฤษทางทหาร": 7,
+  "การอำนวยการทางการสื่อสาร": 8,
+  // M07
+  "การพัฒนาทักษะดิจิทัลที่จำเป็นระดับต้น": 9,
+  // MN01 / MN08
+  "การรักษาความปลอดภัย": 10,
+  "การป้องกันและปราบปรามการก่อความไม่สงบ": 11,
+  "ระเบียบงานสารบรรณ": 12,
+  // MN02 / MN09
+  "แผนที่เข็มทิศ": 13,
+  // S01 / S10
+  "ผู้นำหน่วย": 14,
+  "วิชาตามนโยบายที่กองทัพบกกำหนด": 15,
+  // P01 / P11
+  "ฝึกทบทวนการใช้เครื่องมือสื่อสาร": 16,
+};
+
+// ลำดับประเภทกลุ่มวิชา (M -> MN -> S -> P)
+export const getGroupPrefixOrder = (name: string): number => {
+  const upper = (name || "").trim().toUpperCase();
+  if (upper.startsWith("MN") || upper.includes("รอง")) return 2;
+  if (upper.startsWith("M") || upper.includes("หลัก")) return 1;
+  if (upper.startsWith("S") || upper.includes("ประกอบ")) return 3;
+  if (upper.startsWith("P") || upper.includes("ปฏิบัติ")) return 4;
+  return 5;
+};
+
+// เปรียบเทียบชื่อกลุ่มวิชาเพื่อเรียงลำดับ (M01..M07, MN08..MN09, S10, P11)
+export const compareGroupNames = (aName: string, bName: string): number => {
+  const a = (aName || "").trim();
+  const b = (bName || "").trim();
+  const orderA = getGroupPrefixOrder(a);
+  const orderB = getGroupPrefixOrder(b);
+  if (orderA !== orderB) return orderA - orderB;
+  const matchA = a.match(/\d+/);
+  const matchB = b.match(/\d+/);
+  if (matchA && matchB) {
+    const numA = parseInt(matchA[0], 10);
+    const numB = parseInt(matchB[0], 10);
+    if (numA !== numB) return numA - numB;
+  }
+  return a.localeCompare(b, "th", { numeric: true, sensitivity: "base" });
+};
+
+// เปรียบเทียบรายวิชาภายในกลุ่มเดียวกัน
+export const compareSubjectsInGroup = (a: any, b: any): number => {
+  const aName = (a.name || a.subject_name || "").trim();
+  const bName = (b.name || b.subject_name || "").trim();
+  const orderA = CANONICAL_SUBJECT_ORDER[aName] ?? 999;
+  const orderB = CANONICAL_SUBJECT_ORDER[bName] ?? 999;
+  if (orderA !== orderB) return orderA - orderB;
+  return (a.id || a.subject_id || 0) - (b.id || b.subject_id || 0);
+};
+
 // 1. อัปเดตคะแนนเต็มรายวิชา
 export const updateSubjectMaxScore = async (
   req: Request,
@@ -114,11 +182,17 @@ export const getStudentScores = async (
       batchId,
     ]);
 
-    // แปลงผลลัพธ์ให้เป็น boolean
+    // แปลงผลลัพธ์ให้เป็น boolean และเรียงลำดับตามโครงสร้างหลักสูตรที่แท้จริง
     const formattedSubjectDetails = subjectDetails.map((row) => ({
       ...row,
       is_evaluated: !!row.is_evaluated,
     }));
+
+    formattedSubjectDetails.sort((a: any, b: any) => {
+      const gComp = compareGroupNames(a.group_name || "", b.group_name || "");
+      if (gComp !== 0) return gComp;
+      return compareSubjectsInGroup(a, b);
+    });
 
     // ดึงผลรวมคะแนนรายกลุ่มวิชา
     const summaryQuery = `
@@ -135,10 +209,14 @@ export const getStudentScores = async (
       WHERE sg.batch_id = ?
       GROUP BY sg.id;
     `;
-    const [groupSummaries] = await conn.execute<RowDataPacket[]>(summaryQuery, [
+    const [groupSummaries]: any = await conn.execute<RowDataPacket[]>(summaryQuery, [
       studentId,
       batchId,
     ]);
+
+    groupSummaries.sort((a: any, b: any) => {
+      return compareGroupNames(a.group_name || "", b.group_name || "");
+    });
 
     // ส่งผลลัพธ์กลับ
     res.status(200).json({
@@ -514,7 +592,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
     // จัดกลุ่มวิชา
     const groupsMap: any = {};
     const studentsMap: any = {};
-    const masterSubjects: any[] = [];
     let totalMaxScoreAll = 0;
     let totalCreditAll = 0;
 
@@ -550,7 +627,6 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
           is_su: Boolean(row.is_su),
         };
         group.subjects.push(newSubject);
-        masterSubjects.push(newSubject);
         group.group_max_score += newSubject.max_score;
         totalMaxScoreAll += newSubject.max_score;
       }
@@ -593,6 +669,20 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
         grp.groupName = `รวม ${grp.subjects.length} วิชา ${grp.credit} นก.`;
       }
       return grp;
+    });
+
+    // เรียงกลุ่มวิชาตามลำดับที่แท้จริงของโครงสร้างหลักสูตร (M01..M07, MN08..MN09, S10, P11)
+    subjectGroups.sort((a: any, b: any) => {
+      return compareGroupNames(a.groupCode || a.groupName, b.groupCode || b.groupName);
+    });
+
+    // เรียงวิชาภายในแต่ละกลุ่ม และสร้าง masterSubjects ที่เรียงตามลำดับวิชาที่แท้จริง
+    const masterSubjects: any[] = [];
+    subjectGroups.forEach((grp: any) => {
+      grp.subjects.sort(compareSubjectsInGroup);
+      grp.subjects.forEach((sub: any) => {
+        masterSubjects.push(sub);
+      });
     });
 
     totalCreditAll = 0;
@@ -869,39 +959,14 @@ export const getScoreSubmissions = async (
 
     const [rows]: any = await conn.query(sql, [batchId, batchId]);
 
-    // เรียงตามกลุ่มวิชา
-    const getGroupPrefixOrder = (name: string): number => {
-      const upper = (name || "").trim().toUpperCase();
-      if (upper.startsWith("MN") || upper.includes("รอง")) return 2;
-      if (upper.startsWith("M") || upper.includes("หลัก")) return 1;
-      if (upper.startsWith("S") || upper.includes("ประกอบ")) return 3;
-      if (upper.startsWith("P") || upper.includes("ปฏิบัติ")) return 4;
-      return 5;
-    };
-
-    const compareGroupNames = (aName: string, bName: string): number => {
-      const a = (aName || "").trim();
-      const b = (bName || "").trim();
-      const orderA = getGroupPrefixOrder(a);
-      const orderB = getGroupPrefixOrder(b);
-      if (orderA !== orderB) return orderA - orderB;
-      const matchA = a.match(/\d+/);
-      const matchB = b.match(/\d+/);
-      if (matchA && matchB) {
-        const numA = parseInt(matchA[0], 10);
-        const numB = parseInt(matchB[0], 10);
-        if (numA !== numB) return numA - numB;
-      }
-      return a.localeCompare(b, "th", { numeric: true, sensitivity: "base" });
-    };
-
+    // เรียงตามกลุ่มวิชาและลำดับรายวิชา
     rows.sort((a: any, b: any) => {
       const groupComp = compareGroupNames(
         a.group_name || "",
         b.group_name || "",
       );
       if (groupComp !== 0) return groupComp;
-      return (a.subject_id || 0) - (b.subject_id || 0);
+      return compareSubjectsInGroup(a, b);
     });
 
     res.status(200).json({
@@ -1361,6 +1426,12 @@ export const getBatchRanking = async (
       }
     });
 
+    masterSubjects.sort((a: any, b: any) => {
+      const gComp = compareGroupNames(a.group_name || "", b.group_name || "");
+      if (gComp !== 0) return gComp;
+      return compareSubjectsInGroup(a, b);
+    });
+
     const availableSubjectsList = masterSubjects.map((sub: any) => ({
       ...sub,
       selected: selectedSubSet.has(sub.id),
@@ -1532,12 +1603,9 @@ export const getUnitSelectionRanking = async (
       };
     });
 
-    // เรียงชื่อวิชา
+    // เรียงกลุ่มวิชาตามลำดับที่แท้จริง
     subjectGroups.sort((a: any, b: any) => {
-      return a.groupName.localeCompare(b.groupName, undefined, {
-        numeric: true,
-        sensitivity: "base",
-      });
+      return compareGroupNames(a.groupName, b.groupName);
     });
 
     // คิดคะแนนเต็มรวมคูณหน่วยกิต
