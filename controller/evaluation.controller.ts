@@ -587,7 +587,7 @@ export const submitEvaluationAnswer = async (
 
     return res
       .status(500)
-      .json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึก" });
+      .json({ success: false, message: "ระบบขัดข้อง กรุณาลองใหม่อีกครั้งในภายหลัง" });
   } finally {
     connection.release();
   }
