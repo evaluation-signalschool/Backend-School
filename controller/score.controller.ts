@@ -854,27 +854,98 @@ export const saveBatchScores = async (
       return;
     }
 
-    // เตรียมข้อมูลสำหรับบันทึก และจำกัดค่าคะแนนให้อยู่ในเกณฑ์ที่ถูกต้อง
+    // ตรวจสอบว่าเป็นการอัปเดตเปอร์เซ็นต์เวลา หรือคะแนนความประพฤติ
+    const isUpdatingTimeScores = scores.some(
+      (s: any) => "training_time_score" in s || "exam_time_score" in s
+    );
+    const isUpdatingBehaviorScores = scores.some(
+      (s: any) => "behavior_score" in s
+    );
+
+    // ตรวจสอบความถูกต้องของเปอร์เซ็นต์เวลา (ห้ามค่าว่าง, ห้ามเกิน 100%, ห้ามติดลบ)
+    if (isUpdatingTimeScores) {
+      for (const student of scores) {
+        const train = student.training_time_score;
+        const exam = student.exam_time_score;
+
+        // 1. ตรวจสอบค่าว่าง
+        if (
+          train === undefined ||
+          train === null ||
+          String(train).trim() === "" ||
+          exam === undefined ||
+          exam === null ||
+          String(exam).trim() === ""
+        ) {
+          res.status(400).json({
+            success: false,
+            message: "กรุณากรอกเปอร์เซ็นต์เวลาให้ครบถ้วน",
+          });
+          return;
+        }
+
+        const numTrain = Number(train);
+        const numExam = Number(exam);
+
+        // 2. ตรวจสอบเปอร์เซ็นต์เกิน 100%
+        if (numTrain > 100 || numExam > 100) {
+          res.status(400).json({
+            success: false,
+            message: "เปอร์เซ็นต์เวลาต้องไม่เกิน 100%",
+          });
+          return;
+        }
+
+        // 3. ตรวจสอบค่าติดลบ หรือไม่ใช่ตัวเลข
+        if (isNaN(numTrain) || isNaN(numExam) || numTrain < 0 || numExam < 0) {
+          res.status(400).json({
+            success: false,
+            message: "รูปแบบตัวเลขไม่ถูกต้อง",
+          });
+          return;
+        }
+      }
+    }
+
+    // 4. ตรวจสอบคะแนนความประพฤติ (ถ้ามีส่งมา)
+    if (isUpdatingBehaviorScores) {
+      for (const student of scores) {
+        if (
+          student.behavior_score !== undefined &&
+          student.behavior_score !== null &&
+          String(student.behavior_score).trim() !== ""
+        ) {
+          const numBehav = Number(student.behavior_score);
+          if (isNaN(numBehav) || numBehav < 0 || numBehav > 200) {
+            res.status(400).json({
+              success: false,
+              message: "คะแนนความประพฤติต้องอยู่ระหว่าง 0 ถึง 200 คะแนน",
+            });
+            return;
+          }
+        }
+      }
+    }
+
+    // เตรียมข้อมูลสำหรับบันทึก
     const values = scores.map((student: any) => {
       const trainingScore =
         student.training_time_score !== undefined &&
         student.training_time_score !== null &&
         student.training_time_score !== ""
-          ? Math.max(0, Math.min(100, Number(student.training_time_score)))
+          ? Number(student.training_time_score)
           : null;
-
       const examScore =
         student.exam_time_score !== undefined &&
         student.exam_time_score !== null &&
         student.exam_time_score !== ""
-          ? Math.max(0, Math.min(100, Number(student.exam_time_score)))
+          ? Number(student.exam_time_score)
           : null;
-
       const behaviorScore =
         student.behavior_score !== undefined &&
         student.behavior_score !== null &&
         student.behavior_score !== ""
-          ? Math.max(0, Math.min(200, Number(student.behavior_score)))
+          ? Number(student.behavior_score)
           : null;
 
       return [
