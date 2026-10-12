@@ -136,6 +136,26 @@ export const checkConnection = async () => {
     } catch (_) {}
 
     try {
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS profile_edit_requests (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          student_id INT NOT NULL,
+          original_rank VARCHAR(100) NULL,
+          original_first_name VARCHAR(255) NULL,
+          original_last_name VARCHAR(255) NULL,
+          new_rank VARCHAR(100) NULL,
+          new_first_name VARCHAR(255) NULL,
+          new_last_name VARCHAR(255) NULL,
+          document_path TEXT NULL,
+          status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+    } catch (_) {}
+
+    try {
       await conn.query(`ALTER TABLE profile_edit_requests DROP FOREIGN KEY profile_edit_requests_ibfk_1`);
     } catch (_) {}
     try {
