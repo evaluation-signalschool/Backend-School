@@ -80,11 +80,59 @@ export const createEvaluation = async (
     targetGroup,
   } = req.body;
 
+  // ตรวจสอบชื่อแบบประเมิน (ห้ามว่าง)
+  if (!formName || !String(formName).trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาระบุชื่อแบบประเมิน" });
+  }
+
+  // ตรวจสอบคำชี้แจง / วัตถุประสงค์ (ห้ามว่าง)
+  if (!formDescription || !String(formDescription).trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาระบุคำชี้แจง / วัตถุประสงค์" });
+  }
+
+  // ตรวจสอบประเภทแบบประเมิน
+  if (!formType || !String(formType).trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาเลือกประเภทแบบประเมิน" });
+  }
+
   // เช็คว่ามีคำถามส่งมาด้วยไหม
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
     return res
       .status(400)
       .json({ success: false, message: "กรุณาเพิ่มคำถามอย่างน้อย 1 ข้อ" });
+  }
+
+  // ตรวจสอบว่าคำถามทุกข้อมีข้อความคำถาม
+  for (const [index, q] of questions.entries()) {
+    if (!q.question_text || !String(q.question_text).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: `กรุณาระบุข้อความคำถามในข้อที่ ${index + 1}`,
+      });
+    }
+
+    if (q.question_type === "choice" || q.question_type === "dropdown") {
+      if (!q.choices || !Array.isArray(q.choices) || q.choices.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `กรุณาเพิ่มตัวเลือกในคำถามข้อที่ ${index + 1}`,
+        });
+      }
+      for (const [cIndex, c] of q.choices.entries()) {
+        if (!c.choice_text || !String(c.choice_text).trim()) {
+          return res.status(400).json({
+            success: false,
+            message: `กรุณาระบุข้อความตัวเลือกที่ ${cIndex + 1} ในคำถามข้อที่ ${index + 1}`,
+          });
+        }
+      }
+    }
   }
 
   // ดึง connection ออกมาเพื่อทำ Transaction (ป้องกันข้อมูลบันทึกไม่ครบ)
@@ -247,10 +295,51 @@ export const updateEvaluation = async (
     questions,
   } = req.body;
 
+  // ตรวจสอบชื่อแบบประเมิน (ห้ามว่าง)
+  if (!formName || !String(formName).trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาระบุชื่อแบบประเมิน" });
+  }
+
+  // ตรวจสอบคำชี้แจง / วัตถุประสงค์ (ห้ามว่าง)
+  if (!formDescription || !String(formDescription).trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "กรุณาระบุคำชี้แจง / วัตถุประสงค์" });
+  }
+
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
     return res
       .status(400)
       .json({ success: false, message: "กรุณาเพิ่มคำถามอย่างน้อย 1 ข้อ" });
+  }
+
+  // ตรวจสอบว่าคำถามทุกข้อมีข้อความคำถาม
+  for (const [index, q] of questions.entries()) {
+    if (!q.question_text || !String(q.question_text).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: `กรุณาระบุข้อความคำถามในข้อที่ ${index + 1}`,
+      });
+    }
+
+    if (q.question_type === "choice" || q.question_type === "dropdown") {
+      if (!q.choices || !Array.isArray(q.choices) || q.choices.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `กรุณาเพิ่มตัวเลือกในคำถามข้อที่ ${index + 1}`,
+        });
+      }
+      for (const [cIndex, c] of q.choices.entries()) {
+        if (!c.choice_text || !String(c.choice_text).trim()) {
+          return res.status(400).json({
+            success: false,
+            message: `กรุณาระบุข้อความตัวเลือกที่ ${cIndex + 1} ในคำถามข้อที่ ${index + 1}`,
+          });
+        }
+      }
+    }
   }
 
   const connection = await conn.getConnection();
