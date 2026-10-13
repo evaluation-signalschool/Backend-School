@@ -1261,19 +1261,9 @@ export const getBatchRanking = async (
       }
     });
 
-    // ถ้าไม่ได้เลือกวิชามา ให้ใช้วิชาหลักเป็นค่าเริ่มต้น
+    // ถ้าไม่ได้ระบุวิชามา ให้เริ่มต้นเป็นค่าว่าง (ผู้ใช้เลือกวิชาตัดสินเองตามต้องการ)
     if (!hasExplicitSubjects) {
-      const mainSubs = masterSubjects.filter((s) => {
-        const g = (s.group_name || "").toUpperCase();
-        return (g.startsWith("M") && !g.startsWith("MN")) || g.includes("หลัก");
-      });
-      if (mainSubs.length > 0) {
-        selectedSubIds = mainSubs.map((s) => s.id);
-      } else {
-        selectedSubIds = masterSubjects
-          .filter((s) => !s.is_su)
-          .map((s) => s.id);
-      }
+      selectedSubIds = [];
     }
     const selectedSubSet = new Set<number>(selectedSubIds);
 
