@@ -1415,65 +1415,105 @@ export const getBatchRanking = async (
     const sortedGpas = Array.from(gpaMap.keys()).sort(
       (a, b) => Number(b) - Number(a),
     );
-    const tiedGroupsList: any[] = [];
-    let groupCounter = 0;
+    // จัดสรรอันดับตามเกณฑ์ใหม่:
+    // 1. เฉพาะอันดับ 1, 2, 3 เท่านั้นที่จะใช้คะแนนวิชาตัดสิน (tieBreakScore) เพื่อหาผู้ครองโล่รางวัลเกียรตินิยม (กรอบทอง) อย่างเด็ดขาด
+    //    - หาที่ 1: หาก GPA สูงสุดซ้ำกัน ให้ใช้วิชาตัดสินหาที่ 1 (คนที่เหลือได้อันดับถัดไป)
+    //    - หาที่ 2: หากที่ 1 ไม่ซ้ำ แต่ที่ 2 ซ้ำ ให้ใช้วิชาตัดสินหาที่ 2 (คนที่เหลือได้อันดับถัดไป)
+    //    - หาที่ 3: หากที่ 2 ไม่ซ้ำ แต่ที่ 3 ซ้ำ ให้ใช้วิชาตัดสินหาที่ 3 (คนที่เหลือได้อันดับ 4)
+    // 2. ตั้งแต่อันดับ 4 เป็นต้นไป: หากเกรดซ้ำกัน จะได้ลำดับที่เดียวกัน (Dense Ranking) และเกรดถัดไปได้ลำดับถัดไป +1
+    let currentTargetRank = 1;
+    let nextRankNumber = 1;
 
-    sortedGpas.forEach((gpa) => {
+    for (const gpa of sortedGpas) {
       const cluster = gpaMap.get(gpa)!;
-      if (cluster.length > 1) {
-        groupCounter++;
-        const palette =
-          GROUP_PALETTES[(groupCounter - 1) % GROUP_PALETTES.length];
-        const gId = groupCounter;
 
-        cluster.forEach((s: any) => {
-          s.isTiedGpa = true;
-          s.tiedGroupId = gId;
-          s.tiedGroupColor = palette.border;
-          s.tiedGroupBg = palette.bg;
-          s.tiedGroupText = palette.text;
-          s.tiedGroupCount = cluster.length;
+      if (currentTargetRank <= 3) {
+        // กลุ่มนี้เข้าร่วมชิงอันดับ 1, 2, หรือ 3 (โล่รางวัลเกียรตินิยม)
+        cluster.sort((a: any, b: any) => {
+          const tbDiff = b.tieBreakScore - a.tieBreakScore;
+          if (Math.abs(tbDiff) > 0.001) return tbDiff;
+          const rawDiff = b.total_raw_score - a.total_raw_score;
+          if (Math.abs(rawDiff) > 0.001) return rawDiff;
+          const codeA = parseInt(a.student_code, 10);
+          const codeB = parseInt(b.student_code, 10);
+          if (!isNaN(codeA) && !isNaN(codeB)) return codeA - codeB;
+          return a.student_code.localeCompare(b.student_code);
         });
 
-        tiedGroupsList.push({
-          groupId: gId,
-          gpa: gpa,
-          studentCount: cluster.length,
-          color: palette,
-          isResolved: false,
-          minRank: 0,
-          maxRank: 0,
-          studentCodes: cluster.map((s: any) => s.student_code).join(", "),
-        });
-      }
-    });
+        const slotsAvailable = 4 - currentTargetRank;
+        const takeCount = Math.min(cluster.length, slotsAvailable);
 
-    // กำหนดอันดับให้คนที่คะแนนครบ
-    completedStudents.forEach((s: any, idx: number) => {
-      s.calculatedRank = idx + 1;
-      s.manualRank = idx + 1;
-      s.isTrulyTied = false;
+        for (let i = 0; i < takeCount; i++) {
+          const s = cluster[i];
+          s.calculatedRank = currentTargetRank;
+          s.manualRank = currentTargetRank;
+          s.isTrulyTied = false;
 
-      if (s.isTiedGpa) {
-        const cluster = gpaMap.get(s.gpa)!;
-        const sameScoreCount = cluster.filter(
-          (other: any) =>
-            Math.abs(other.tieBreakScore - s.tieBreakScore) <= 0.001,
-        ).length;
+          if (cluster.length > 1) {
+            s.isTiedGpa = true;
+            const sameTbCount = cluster.filter(
+              (other: any) =>
+                Math.abs(other.tieBreakScore - s.tieBreakScore) <= 0.001,
+            ).length;
 
-        if (selectedSubSet.size === 0) {
-          s.isTrulyTied = true;
-          s.tieBreakReason = `เกรดเท่ากัน (กรุณาเลือกวิชาด้านบนเพื่อตัดสิน)`;
-        } else if (sameScoreCount > 1) {
-          s.isTrulyTied = true;
-          s.tieBreakReason = `คะแนนวิชาที่เลือกเท่ากัน (${s.tieBreakScore.toFixed(1)}) เลือกวิชาเพิ่มเพื่อตัดสิน`;
+            if (selectedSubSet.size === 0) {
+              s.isTrulyTied = true;
+              s.tieBreakReason = `เกรด ${s.gpa} เท่ากัน (แย่งชิงอันดับที่ ${s.calculatedRank} - กรุณาเลือกวิชาด้านบนเพื่อตัดสิน)`;
+            } else if (sameTbCount > 1) {
+              s.isTrulyTied = true;
+              s.tieBreakReason = `คะแนนวิชาที่เลือกเท่ากัน (${s.tieBreakScore.toFixed(1)}) แย่งชิงอันดับที่ ${s.calculatedRank} เลือกวิชาเพิ่มเพื่อตัดสิน`;
+            } else {
+              s.tieBreakReason = `เกรด ${s.gpa} (ชนะด้วยคะแนนวิชาที่เลือก: ${s.tieBreakScore.toFixed(1)} / ${s.tieBreakMaxScore})`;
+            }
+          } else {
+            s.isTiedGpa = false;
+            s.tieBreakReason = `เกรดสะสม ${s.gpa} (อันดับที่ ${s.calculatedRank} เดี่ยว)`;
+          }
+
+          currentTargetRank++;
+        }
+
+        // กรณีคนในกลุ่มที่เหลือหลุดจาก Top 3
+        if (cluster.length > takeCount) {
+          const rankForRest = 4;
+          for (let i = takeCount; i < cluster.length; i++) {
+            const s = cluster[i];
+            s.calculatedRank = rankForRest;
+            s.manualRank = rankForRest;
+            s.isTiedGpa = true;
+            s.isTrulyTied = false;
+            s.tieBreakReason = `เกรดสะสม ${s.gpa} เท่ากัน ${cluster.length} คน (ได้ลำดับที่ ${rankForRest} ร่วมกัน)`;
+          }
+          nextRankNumber = rankForRest + 1;
         } else {
-          s.tieBreakReason = `เกรด ${s.gpa} (ชนะด้วยคะแนนวิชาที่เลือก: ${s.tieBreakScore.toFixed(1)} / ${s.tieBreakMaxScore})`;
+          nextRankNumber = currentTargetRank;
         }
       } else {
-        s.tieBreakReason = `เกรดสะสม ${s.gpa}`;
+        // ลำดับอื่นๆ ตั้งแต่อันดับ 4 เป็นต้นไป: ถ้าเกรดซ้ำกัน ให้ได้ลำดับที่เดียวกัน
+        const assignedRank = nextRankNumber;
+        cluster.sort((a: any, b: any) => {
+          const codeA = parseInt(a.student_code, 10);
+          const codeB = parseInt(b.student_code, 10);
+          if (!isNaN(codeA) && !isNaN(codeB)) return codeA - codeB;
+          return a.student_code.localeCompare(b.student_code);
+        });
+
+        cluster.forEach((s: any) => {
+          s.calculatedRank = assignedRank;
+          s.manualRank = assignedRank;
+          s.isTrulyTied = false;
+          if (cluster.length > 1) {
+            s.isTiedGpa = true;
+            s.tieBreakReason = `เกรดสะสม ${s.gpa} เท่ากัน ${cluster.length} คน (ได้ลำดับที่ ${assignedRank} ร่วมกัน)`;
+          } else {
+            s.isTiedGpa = false;
+            s.tieBreakReason = `เกรดสะสม ${s.gpa}`;
+          }
+        });
+
+        nextRankNumber = assignedRank + 1;
       }
-    });
+    }
 
     // กำหนดสถานะให้คนที่คะแนนไม่ครบ
     incompleteStudents.forEach((s: any) => {
@@ -1484,16 +1524,53 @@ export const getBatchRanking = async (
       s.tieBreakReason = `คะแนนยังไม่ครบ (มีคะแนนเพียง ${s.scored_subjects_count}/${gradeSubjectsCount} วิชา - ไม่นำมาจัดอันดับ)`;
     });
 
-    // สรุปข้อมูลกลุ่มที่คะแนนเท่ากัน
-    tiedGroupsList.forEach((tg) => {
-      const members = completedStudents.filter(
-        (s: any) => s.tiedGroupId === tg.groupId,
-      );
-      if (members.length > 0) {
-        tg.minRank = Math.min(...members.map((m: any) => m.manualRank));
-        tg.maxRank = Math.max(...members.map((m: any) => m.manualRank));
-        tg.studentCodes = members.map((m: any) => m.student_code).join(", ");
-        tg.isResolved = !members.some((m: any) => m.isTrulyTied);
+    // เรียงลำดับนักเรียนที่ครบสมบูรณ์ตามอันดับ
+    completedStudents.sort((a: any, b: any) => {
+      if (a.manualRank !== b.manualRank) {
+        return a.manualRank - b.manualRank;
+      }
+      const tbDiff = b.tieBreakScore - a.tieBreakScore;
+      if (Math.abs(tbDiff) > 0.001) return tbDiff;
+      const codeA = parseInt(a.student_code, 10);
+      const codeB = parseInt(b.student_code, 10);
+      if (!isNaN(codeA) && !isNaN(codeB)) return codeA - codeB;
+      return a.student_code.localeCompare(b.student_code);
+    });
+
+    // กำหนดข้อมูลกลุ่มที่เกรดซ้ำ
+    sortedGpas.forEach((gpa) => {
+      const cluster = gpaMap.get(gpa)!;
+      if (cluster.length > 1) {
+        groupCounter++;
+        const palette =
+          GROUP_PALETTES[(groupCounter - 1) % GROUP_PALETTES.length];
+        const gId = groupCounter;
+
+        cluster.forEach((s: any) => {
+          s.tiedGroupId = gId;
+          s.tiedGroupColor = palette.border;
+          s.tiedGroupBg = palette.bg;
+          s.tiedGroupText = palette.text;
+          s.tiedGroupCount = cluster.length;
+        });
+
+        const minR = Math.min(...cluster.map((m: any) => m.manualRank));
+        const maxR = Math.max(...cluster.map((m: any) => m.manualRank));
+        const isTop3 = cluster.some((m: any) => m.manualRank <= 3);
+
+        tiedGroupsList.push({
+          groupId: gId,
+          gpa: gpa,
+          studentCount: cluster.length,
+          color: palette,
+          isTop3Group: isTop3,
+          isResolved: isTop3
+            ? !cluster.filter((m: any) => m.manualRank <= 3).some((m: any) => m.isTrulyTied)
+            : true,
+          minRank: minR,
+          maxRank: maxR,
+          studentCodes: cluster.map((s: any) => s.student_code).join(", "),
+        });
       }
     });
 
@@ -1508,18 +1585,25 @@ export const getBatchRanking = async (
       selected: selectedSubSet.has(sub.id),
     }));
 
+    const finalStudentList = [...completedStudents, ...incompleteStudents];
+    const top3UnresolvedCount = completedStudents.filter(
+      (s: any) => s.manualRank <= 3 && s.isTrulyTied,
+    ).length;
+
     res.json({
       success: true,
-      data: studentList,
+      data: finalStudentList,
       tiedGroups: tiedGroupsList,
       availableSubjects: availableSubjectsList,
       summary: {
         batch_id: Number(batchId),
-        total_students: studentList.length,
+        total_students: finalStudentList.length,
         completed_students: completedStudents.length,
         incomplete_students: incompleteStudents.length,
         total_subjects: masterSubjects.length,
         selected_subjects_count: selectedSubSet.size,
+        tiedCount: finalStudentList.filter((s: any) => s.isTiedGpa && s.is_completed).length,
+        unresolvedTies: top3UnresolvedCount,
       },
     });
   } catch (error) {
