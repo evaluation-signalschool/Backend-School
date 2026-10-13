@@ -1538,6 +1538,9 @@ export const getBatchRanking = async (
     });
 
     // กำหนดข้อมูลกลุ่มที่เกรดซ้ำ (เฉพาะกลุ่มที่เกี่ยวข้องกับการชิงอันดับ 1, 2, 3 โล่รางวัลเกียรตินิยม)
+    let groupCounter = 0;
+    const tiedGroupsList: any[] = [];
+
     sortedGpas.forEach((gpa) => {
       const cluster = gpaMap.get(gpa)!;
       if (cluster.length > 1) {
@@ -1622,7 +1625,11 @@ export const getBatchRanking = async (
     console.error("Error calculating batch ranking:", error);
     res
       .status(500)
-      .json({ success: false, message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ" });
+      .json({
+        success: false,
+        message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ",
+        error: (error as any)?.message,
+      });
   }
 };
 
