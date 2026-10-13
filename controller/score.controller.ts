@@ -1537,16 +1537,31 @@ export const getBatchRanking = async (
       return a.student_code.localeCompare(b.student_code);
     });
 
-    // กำหนดข้อมูลกลุ่มที่เกรดซ้ำ
+    // กำหนดข้อมูลกลุ่มที่เกรดซ้ำ (เฉพาะกลุ่มที่เกี่ยวข้องกับการชิงอันดับ 1, 2, 3 โล่รางวัลเกียรตินิยม)
     sortedGpas.forEach((gpa) => {
       const cluster = gpaMap.get(gpa)!;
       if (cluster.length > 1) {
+        const isTop3 = cluster.some((m: any) => m.manualRank <= 3);
+        if (!isTop3) {
+          // ลำดับอื่นๆ ตั้งแต่อันดับ 4 เป็นต้นไป ได้ลำดับซ้ำกันตามเกรดเฉลี่ย (Dense Ranking) อยู่แล้ว ไม่ต้องนำมาแสดงเป็นการ์ดกลุ่มแย่งชิง
+          cluster.forEach((s: any) => {
+            s.isTiedGpa = false;
+            delete s.tiedGroupId;
+            delete s.tiedGroupColor;
+            delete s.tiedGroupBg;
+            delete s.tiedGroupText;
+            delete s.tiedGroupCount;
+          });
+          return;
+        }
+
         groupCounter++;
         const palette =
           GROUP_PALETTES[(groupCounter - 1) % GROUP_PALETTES.length];
         const gId = groupCounter;
 
         cluster.forEach((s: any) => {
+          s.isTiedGpa = true;
           s.tiedGroupId = gId;
           s.tiedGroupColor = palette.border;
           s.tiedGroupBg = palette.bg;
@@ -1556,17 +1571,14 @@ export const getBatchRanking = async (
 
         const minR = Math.min(...cluster.map((m: any) => m.manualRank));
         const maxR = Math.max(...cluster.map((m: any) => m.manualRank));
-        const isTop3 = cluster.some((m: any) => m.manualRank <= 3);
 
         tiedGroupsList.push({
           groupId: gId,
           gpa: gpa,
           studentCount: cluster.length,
           color: palette,
-          isTop3Group: isTop3,
-          isResolved: isTop3
-            ? !cluster.filter((m: any) => m.manualRank <= 3).some((m: any) => m.isTrulyTied)
-            : true,
+          isTop3Group: true,
+          isResolved: !cluster.filter((m: any) => m.manualRank <= 3).some((m: any) => m.isTrulyTied),
           minRank: minR,
           maxRank: maxR,
           studentCodes: cluster.map((s: any) => s.student_code).join(", "),
@@ -1602,7 +1614,7 @@ export const getBatchRanking = async (
         incomplete_students: incompleteStudents.length,
         total_subjects: masterSubjects.length,
         selected_subjects_count: selectedSubSet.size,
-        tiedCount: finalStudentList.filter((s: any) => s.isTiedGpa && s.is_completed).length,
+        tiedCount: finalStudentList.filter((s: any) => s.manualRank <= 3 && s.isTiedGpa && s.is_completed).length,
         unresolvedTies: top3UnresolvedCount,
       },
     });
