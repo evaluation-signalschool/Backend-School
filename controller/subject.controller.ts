@@ -1,5 +1,10 @@
 import { Request, Response } from "express";
 import { conn } from "../dbconn";
+import {
+  CANONICAL_SUBJECT_ORDER,
+  compareGroupNames,
+  compareSubjectsInGroup,
+} from "./score.controller";
 
 export const getSubjectsByBatch = async (
   req: Request,
@@ -53,6 +58,7 @@ export const getSubjectsByBatch = async (
           groupsMap[row.group_id].subjects.push({
             subject_id: row.subject_id,
             subject_name: row.subject_name,
+            group_name: row.group_name,
             is_su: Boolean(row.is_su),
             form_url: row.form_url || null,
           });
@@ -60,9 +66,22 @@ export const getSubjectsByBatch = async (
       }
     });
 
+    const sortedGroups = Object.values(groupsMap).sort((a: any, b: any) => {
+      return compareGroupNames(a.group_name || "", b.group_name || "");
+    });
+
+    sortedGroups.forEach((group: any) => {
+      group.subjects.sort((a: any, b: any) => {
+        const canonA = CANONICAL_SUBJECT_ORDER[a.subject_name] ?? 999;
+        const canonB = CANONICAL_SUBJECT_ORDER[b.subject_name] ?? 999;
+        if (canonA !== canonB) return canonA - canonB;
+        return compareSubjectsInGroup(a, b);
+      });
+    });
+
     return res.status(200).json({
       success: true,
-      data: Object.values(groupsMap),
+      data: sortedGroups,
     });
   } catch (error: any) {
     console.error("Database Error:", error);
