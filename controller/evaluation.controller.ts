@@ -735,8 +735,8 @@ export const getFormSubmissions = async (
       paramsSubmissions,
     );
 
-    // 3. ดึงคำตอบทั้งหมดของฟอร์มนี้
-    const sqlAnswers = `
+    // 3. ดึงคำตอบทั้งหมดของฟอร์มนี้ (กรองตามรายวิชาถ้ามีเพื่อความรวดเร็ว)
+    let sqlAnswers = `
       SELECT 
         a.submission_id,
         a.question_id,
@@ -746,14 +746,27 @@ export const getFormSubmissions = async (
       INNER JOIN evaluation_submissions s ON a.submission_id = s.id
       WHERE s.form_id = ?
     `;
-    const [answersRaw]: any = await conn.query(sqlAnswers, [formId]);
+    const paramsAnswers: any[] = [formId];
+    if (subjectId) {
+      sqlAnswers += ` AND s.subject_id = ?`;
+      paramsAnswers.push(subjectId);
+    }
+
+    const [answersRaw]: any = await conn.query(sqlAnswers, paramsAnswers);
+
+    // สร้าง Map สำหรับจัดกลุ่มคำตอบตาม submission_id เพื่อความรวดเร็ว O(1)
+    const answersBySubId = new Map<number, any[]>();
+    for (const ans of answersRaw) {
+      if (!answersBySubId.has(ans.submission_id)) {
+        answersBySubId.set(ans.submission_id, []);
+      }
+      answersBySubId.get(ans.submission_id)!.push(ans);
+    }
 
     // 4. ประกอบร่างข้อมูล (Transform Data)
     const submissions = submissionsRaw.map((sub: any) => {
-      // ค้นหาคำตอบของ submission นี้
-      const userAnswers = answersRaw.filter(
-        (a: any) => a.submission_id === sub.submission_id,
-      );
+      // ค้นหาคำตอบของ submission นี้จาก Map
+      const userAnswers = answersBySubId.get(sub.submission_id) || [];
 
       const answerDict: any = {};
       for (const ans of userAnswers) {
