@@ -26,8 +26,8 @@ export const verifyToken = (
   }
 
   try {
-    // 2. ตรวจสอบความถูกต้องของ Token
-    const secretKey = process.env.JWT_SECRET || "SIGNAL"; // ต้องตรงกับตอนล็อคอิน
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool"; // ต้องตรงกับตอนล็อคอิน
     const decoded = jwt.verify(token, secretKey);
 
     // 3. แนบข้อมูลที่ถอดรหัสได้ (เช่น student_id, batch_id) ไปกับ Request
@@ -63,7 +63,8 @@ export const verifyAdmin = (
   }
 
   try {
-    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
     const decoded = jwt.verify(token, secretKey) as any;
 
     // ตรวจสอบว่ามี role เป็น admin หรือ superadmin หรือไม่
@@ -113,7 +114,8 @@ export const verifySuperAdmin = (
   }
 
   try {
-    const secretKey = process.env.JWT_SECRET || "SIGNAL";
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
     const decoded = jwt.verify(token, secretKey) as any;
 
     // ตรวจสอบว่ามี role เป็น superadmin เท่านั้น

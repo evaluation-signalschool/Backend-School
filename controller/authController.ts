@@ -112,7 +112,7 @@ export const adminLogin = async (
   req: Request,
   res: Response,
 ): Promise<Response> => {
-  const { username, email, password } = req.body;
+  const { username, email, password, rememberMe } = req.body;
   const loginIdentifier = (username || email || "").trim();
 
   try {
@@ -174,6 +174,15 @@ export const adminLogin = async (
     const adminRole = admin.role || "admin";
     const adminName = admin.name || "ผู้ดูแลระบบ";
 
+    // หากผู้ใช้เลือกจดจำการเข้าสู่ระบบ (Remember Me) ให้ Token มีอายุ 30 วัน ถ้าไม่เลือกจะหมดอายุ/รีเซ็ตใน 1 วัน
+    const isRemember = Boolean(
+      rememberMe === true ||
+      rememberMe === "true" ||
+      rememberMe === 1 ||
+      rememberMe === "1"
+    );
+    const expiresIn = isRemember ? "30d" : "1d";
+
     const token = jwt.sign(
       {
         admin_id: admin.id,
@@ -183,7 +192,7 @@ export const adminLogin = async (
         status: admin.status || "active",
       },
       secretKey,
-      { expiresIn: "1d" },
+      { expiresIn },
     );
 
     // บันทึก Activity Log เข้าสู่ระบบ
@@ -193,7 +202,7 @@ export const adminLogin = async (
       adminUsername: adminUsername,
       action: "LOGIN",
       category: "AUTH",
-      details: `เข้าสู่ระบบสำเร็จ (ชื่อผู้ใช้: ${adminUsername}, สิทธิ์: ${adminRole === "superadmin" ? "ผู้ดูแลระบบหลัก (Super Admin)" : "ผู้ดูแลระบบ (Admin)"})`,
+      details: `เข้าสู่ระบบสำเร็จ (ชื่อผู้ใช้: ${adminUsername}, สิทธิ์: ${adminRole === "superadmin" ? "ผู้ดูแลระบบหลัก (Super Admin)" : "ผู้ดูแลระบบ (Admin)"}${isRemember ? ", จดจำการเข้าสู่ระบบ 30 วัน" : ", รีเซ็ตทุก 1 วัน"})`,
       req,
     });
 
@@ -201,6 +210,8 @@ export const adminLogin = async (
       success: true,
       message: "แอดมินเข้าสู่ระบบสำเร็จ",
       token: token,
+      rememberMe: isRemember,
+      expiresIn: expiresIn,
       adminData: {
         admin_id: admin.id,
         username: adminUsername,
