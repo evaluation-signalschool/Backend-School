@@ -342,42 +342,57 @@ export const updateStudent = async (
   try {
     connection = await conn.getConnection();
 
-    // ตรวจสอบรหัสผ่าน หากมีการส่งมาให้เข้ารหัสด้วย bcrypt
-    let updatePasswordQuery = "";
-    let finalHashedPassword = "";
+    const fieldsToUpdate: string[] = [];
+    const updateParams: any[] = [];
+
+    if (rank_name !== undefined) {
+      fieldsToUpdate.push("rank_name = ?");
+      updateParams.push(rank_name || "");
+    }
+    if (first_name !== undefined) {
+      fieldsToUpdate.push("first_name = ?");
+      updateParams.push(first_name);
+    }
+    if (last_name !== undefined) {
+      fieldsToUpdate.push("last_name = ?");
+      updateParams.push(last_name || "");
+    }
+    if (student_code !== undefined) {
+      fieldsToUpdate.push("student_code = ?");
+      updateParams.push(student_code);
+    }
     if (password && String(password).trim() !== "") {
       const trimmed = String(password).trim();
-      finalHashedPassword =
+      const finalHashedPassword =
         trimmed.startsWith("$2a$") || trimmed.startsWith("$2b$")
           ? trimmed
           : await bcrypt.hash(trimmed, 10);
-      updatePasswordQuery = "password = ?,";
+      fieldsToUpdate.push("password = ?");
+      updateParams.push(finalHashedPassword);
+    }
+    if (affiliation !== undefined) {
+      fieldsToUpdate.push("affiliation = ?");
+      updateParams.push(affiliation || "");
+    }
+    if (email !== undefined) {
+      fieldsToUpdate.push("email = ?");
+      updateParams.push(email || "");
+    }
+    if (phone !== undefined) {
+      fieldsToUpdate.push("phone = ?");
+      updateParams.push(phone || "");
+    }
+
+    if (fieldsToUpdate.length === 0) {
+      return res.status(400).json({ message: "ไม่มีข้อมูลที่ต้องการอัปเดต" });
     }
 
     const query = `
       UPDATE students 
-      SET 
-        rank_name = ?, 
-        first_name = ?, 
-        last_name = ?, 
-        student_code = ?, 
-        ${updatePasswordQuery}
-        affiliation = ?,
-        email = ?,
-        phone = ?
+      SET ${fieldsToUpdate.join(", ")}
       WHERE id = ?
     `;
-
-    const updateParams: any[] = [
-      rank_name || "",
-      first_name,
-      last_name || "",
-      student_code,
-    ];
-    if (updatePasswordQuery) {
-      updateParams.push(finalHashedPassword);
-    }
-    updateParams.push(affiliation || "", email || "", phone || "", id);
+    updateParams.push(id);
 
     const [result]: any = await connection.execute(query, updateParams);
 
@@ -555,3 +570,68 @@ export const resequenceStudents = async (
     if (connection) connection.release();
   }
 };
+
+// 7. อัปเดตสังกัดของนักเรียนแบบกลุ่ม (สำหรับการเลือกลงหน่วย Unit Selection)
+export const updateBatchAffiliations = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  const { assignments } = req.body;
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "กรุณาระบุข้อมูลการจัดสรรสังกัด (assignments)",
+    });
+  }
+
+  let connection;
+  try {
+    connection = await conn.getConnection();
+    await connection.beginTransaction();
+
+    let updatedCount = 0;
+    for (const item of assignments) {
+      const studentId = item.student_id || item.id;
+      const affil = item.affiliation !== undefined ? String(item.affiliation).trim() : null;
+      if (studentId && affil !== null) {
+        await connection.execute(
+          "UPDATE students SET affiliation = ? WHERE id = ?",
+          [affil, studentId]
+        );
+        updatedCount++;
+      }
+    }
+
+    await connection.commit();
+
+    const user = (req as AuthRequest).user;
+    if (user?.admin_id) {
+      logAdminActivity({
+        adminId: user.admin_id,
+        adminName: user.name,
+        adminUsername: user.username,
+        action: "UPDATE_STUDENT",
+        actionCategory: "STUDENT",
+        details: `อัปเดตสังกัดของนักเรียนจากการเลือกลงหน่วย จำนวน ${updatedCount} นาย`,
+        ipAddress: req.ip || req.socket.remoteAddress,
+      }).catch((err) => console.error("Logging error:", err));
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `บันทึกข้อมูลและอัปเดตสังกัดของนักเรียนสำเร็จ ${updatedCount} นาย`,
+      updatedCount,
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error("Error in updateBatchAffiliations:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการอัปเดตสังกัดของนักเรียน",
+      error,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+

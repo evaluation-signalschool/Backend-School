@@ -7,6 +7,7 @@ import {
   updateStudent,
   uploadStudent,
   resequenceStudents,
+  updateBatchAffiliations,
 } from "../controller/studentController";
 import { verifyAdmin, optionalAdmin } from "../middleware/auth.middleware";
 
@@ -23,6 +24,7 @@ router.post("/students/register", optionalAdmin, addStudent);
 // 2. ปฏิบัติการอื่นๆ ที่ต้องใช้สิทธิ์ Admin อย่างเข้มงวด
 router.post("/students/upload", verifyAdmin, upload.single("csvFile"), uploadStudent);
 router.get("/students", verifyAdmin, getStudents);
+router.put("/students/batch/affiliations", verifyAdmin, updateBatchAffiliations);
 router.put("/students/resequence/:batch_id", verifyAdmin, resequenceStudents);
 router.put("/students/:id", verifyAdmin, updateStudent);
 router.delete("/students/:id", verifyAdmin, deleteStudent);
