@@ -2,6 +2,9 @@ import { Request, Response } from "express";
 import { conn } from "../dbconn";
 import bcrypt from "bcrypt"; 
 import jwt from "jsonwebtoken"; 
+import { OAuth2Client } from "google-auth-library";
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID); 
 
 export const studentLogin = async (
   req: Request,
@@ -103,6 +106,343 @@ export const studentLogin = async (
     return res.status(500).json({
       success: false,
       message: "เกิดข้อผิดพลาดที่เซิร์ฟเวอร์",
+    });
+  }
+};
+
+/**
+ * 🌟 ล็อกอินนักเรียนด้วยบัญชี Google
+ * - บันทึกข้อมูลเริ่มต้นครั้งแรกตอนที่ล็อกอินเข้ามา
+ * - หากยังกรอกข้อมูลไม่ครบ (ยศ, ชื่อ, นามสกุล, สังกัด, เบอร์โทร) จะส่ง isProfileComplete: false
+ * - หากกรอกครบแล้ว จะส่ง isProfileComplete: true พร้อม token เข้าหน้าคะแนนได้ทันที
+ */
+export const studentGoogleLogin = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { credential, batch_id, google_id: rawGoogleId, email: rawEmail, name: rawName, picture: rawPicture } = req.body;
+
+    let googleId = rawGoogleId || "";
+    let email = (rawEmail || "").trim();
+    let name = (rawName || "").trim();
+    let picture = rawPicture || "";
+
+    // 1. ถ้าส่ง Google ID Token (credential) มา ให้พยายาม verify ด้วย google-auth-library หรือ decode
+    if (credential && typeof credential === "string") {
+      try {
+        const ticket = await googleClient.verifyIdToken({
+          idToken: credential,
+          audience: process.env.GOOGLE_CLIENT_ID || undefined,
+        });
+        const payload = ticket.getPayload();
+        if (payload) {
+          googleId = payload.sub || googleId;
+          email = payload.email || email;
+          name = payload.name || name;
+          picture = payload.picture || picture;
+        }
+      } catch (verifyErr) {
+        // Fallback: decode JWT payload โดยตรง (กรณี client ID ยังไม่ได้ตั้งค่าใน .env)
+        try {
+          const parts = credential.split(".");
+          if (parts.length === 3) {
+            const decoded = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+            googleId = decoded.sub || googleId;
+            email = decoded.email || email;
+            name = decoded.name || name;
+            picture = decoded.picture || picture;
+          }
+        } catch (decodeErr) {
+          console.warn("Could not decode Google credential:", decodeErr);
+        }
+      }
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "ไม่พบข้อมูลอีเมลจาก Google กรุณาลองใหม่อีกครั้ง",
+      });
+    }
+
+    // 2. ตรวจสอบ batch_id
+    let batchId = Number(batch_id) || 0;
+    if (!batchId) {
+      // ค้นหาว่านักเรียนอีเมลนี้เคยลงทะเบียนในรุ่นไหนหรือไม่
+      const [existingEnrollments]: any = await conn.query(
+        `SELECT batch_id FROM students WHERE (LOWER(email) = LOWER(?) OR (google_id = ? AND google_id != '')) ORDER BY id DESC LIMIT 1`,
+        [email, googleId || ""]
+      );
+      if (existingEnrollments.length > 0) {
+        batchId = Number(existingEnrollments[0].batch_id);
+      } else {
+        return res.status(400).json({
+          success: false,
+          needsBatchSelection: true,
+          message: "กรุณาเลือกรุ่น/หลักสูตรที่ต้องการเข้าสู่ระบบ",
+        });
+      }
+    }
+
+    // 3. ค้นหานักเรียนในรุ่นนี้ โดยค้นจาก google_id หรือ email
+    const [rows]: any = await conn.query(
+      `SELECT s.*, cb.batch_name, c.course_name, cb.course_id 
+       FROM students s
+       LEFT JOIN course_batches cb ON s.batch_id = cb.id
+       LEFT JOIN courses c ON cb.course_id = c.id
+       WHERE s.batch_id = ? AND (((s.google_id = ? AND s.google_id != '') OR LOWER(s.email) = LOWER(?)))
+       LIMIT 1`,
+      [batchId, googleId, email]
+    );
+
+    let student: any = null;
+    let isProfileComplete = false;
+
+    if (rows.length === 0) {
+      // 🌟 ครั้งแรกที่ล็อกอินเข้ามาในรุ่นนี้: บันทึกข้อมูลเริ่มต้นทันที (เก็บข้อมูลครั้งแรกตอนที่ล้อกอินเข้ามา)
+      // แกะชื่อและนามสกุลจากชื่อใน Google
+      const parts = name.split(/\s+/).filter(Boolean);
+      let firstName = name || email.split("@")[0];
+      let lastName = "";
+      if (parts.length >= 2) {
+        lastName = parts.pop() || "";
+        firstName = parts.join(" ");
+      }
+
+      // คำนวณรหัสนักเรียน (student_code) อัตโนมัติในรุ่นนี้
+      const [countResult]: any = await conn.query(
+        "SELECT COUNT(*) as count FROM students WHERE batch_id = ?",
+        [batchId]
+      );
+      const studentCode = (Number(countResult[0]?.count || 0) + 1).toString();
+
+      const [insertRes]: any = await conn.query(
+        `INSERT INTO students 
+         (batch_id, student_code, password, rank_name, first_name, last_name, affiliation, email, google_id, phone, profile_completed, picture) 
+         VALUES (?, ?, NULL, '', ?, ?, '', ?, ?, '', 0, ?)`,
+        [batchId, studentCode, firstName, lastName, email, googleId, picture]
+      );
+
+      const insertedId = insertRes.insertId;
+      const [newRows]: any = await conn.query(
+        `SELECT s.*, cb.batch_name, c.course_name, cb.course_id 
+         FROM students s
+         LEFT JOIN course_batches cb ON s.batch_id = cb.id
+         LEFT JOIN courses c ON cb.course_id = c.id
+         WHERE s.id = ?`,
+        [insertedId]
+      );
+      student = newRows[0];
+      isProfileComplete = false;
+    } else {
+      student = rows[0];
+
+      // อัปเดต google_id หรือ picture ถ้ายังไม่มี
+      const updates: string[] = [];
+      const updateParams: any[] = [];
+      if (!student.google_id && googleId) {
+        updates.push("google_id = ?");
+        updateParams.push(googleId);
+        student.google_id = googleId;
+      }
+      if (picture && (!student.picture || student.picture !== picture)) {
+        updates.push("picture = ?");
+        updateParams.push(picture);
+        student.picture = picture;
+      }
+      if (updates.length > 0) {
+        updateParams.push(student.id);
+        await conn.query(`UPDATE students SET ${updates.join(", ")} WHERE id = ?`, updateParams);
+      }
+
+      // ตรวจสอบว่ากรอกข้อมูลครบแล้วหรือยัง
+      isProfileComplete = Boolean(
+        student.profile_completed === 1 ||
+        (student.rank_name &&
+         student.rank_name.trim() !== "" &&
+         student.first_name &&
+         student.first_name.trim() !== "" &&
+         student.affiliation &&
+         student.affiliation.trim() !== "" &&
+         student.phone &&
+         student.phone.trim() !== "" &&
+         student.email &&
+         student.email.trim() !== "")
+      );
+
+      // ถ้าข้อมูลครบแล้ว แต่ profile_completed ยังเป็น 0 ให้เซ็ตเป็น 1
+      if (isProfileComplete && student.profile_completed !== 1) {
+        await conn.query("UPDATE students SET profile_completed = 1 WHERE id = ?", [student.id]);
+        student.profile_completed = 1;
+      }
+    }
+
+    // สร้าง JWT Token เพื่อให้นักเรียนนำไปใช้เข้าดูคะแนน
+    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
+    const token = jwt.sign(
+      {
+        student_id: student.id,
+        student_code: student.student_code,
+        batch_id: student.batch_id,
+        email: student.email,
+      },
+      secretKey,
+      { expiresIn: "7d" }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "เข้าสู่ระบบด้วย Google สำเร็จ",
+      isProfileComplete,
+      token,
+      studentData: {
+        student_id: student.id,
+        batch_id: student.batch_id,
+        student_code: student.student_code,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        rank_name: student.rank_name || "",
+        affiliation: student.affiliation || "",
+        email: student.email,
+        phone: student.phone || "",
+        picture: student.picture || picture,
+        course_name: student.course_name || "",
+        batch_name: student.batch_name || "",
+        course_id: student.course_id,
+        profile_completed: student.profile_completed || 0,
+      },
+    });
+  } catch (error: any) {
+    console.error("Student Google Login Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วย Google",
+    });
+  }
+};
+
+/**
+ * 🌟 กรอกข้อมูลนักเรียนให้ครบถ้วนหลังจากล็อกอินผ่าน Google ครั้งแรก
+ */
+export const studentCompleteProfile = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { student_id, rank_name, first_name, last_name, affiliation, phone } = req.body;
+
+    if (!student_id) {
+      return res.status(400).json({
+        success: false,
+        message: "ไม่พบรหัสผู้เรียน (student_id)",
+      });
+    }
+
+    // ตรวจสอบความถูกต้องของยศ: ห้ามมีตัวเลข หรือเครื่องหมาย @
+    if (
+      !rank_name ||
+      (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณาระบุชื่อยศเต็ม (ห้ามใส่ตัวเลขหรือเครื่องหมาย @)",
+      });
+    }
+
+    // ตรวจสอบชื่อและนามสกุล: ห้ามมีตัวเลข หรือสัญลักษณ์ @
+    if (
+      !first_name ||
+      (/[0-9\u0E50-\u0E59]/.test(first_name) || first_name.includes("@")) ||
+      (last_name && (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "ชื่อและนามสกุลต้องไม่มีตัวเลขหรือสัญลักษณ์พิเศษ",
+      });
+    }
+
+    if (!affiliation || !affiliation.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณาระบุหน่วยต้นสังกัด",
+      });
+    }
+
+    const cleanedPhone = String(phone || "").replace(/[^0-9]/g, "");
+    if (!cleanedPhone || cleanedPhone.length < 9 || cleanedPhone.length > 10) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณาระบุเบอร์โทรศัพท์ที่ถูกต้อง (9-10 หลัก)",
+      });
+    }
+
+    // อัปเดตข้อมูลผู้เรียน และทำเครื่องหมาย profile_completed = 1
+    await conn.query(
+      `UPDATE students 
+       SET rank_name = ?, first_name = ?, last_name = ?, affiliation = ?, phone = ?, profile_completed = 1
+       WHERE id = ?`,
+      [rank_name.trim(), first_name.trim(), (last_name || "").trim(), affiliation.trim(), cleanedPhone, student_id]
+    );
+
+    // ดึงข้อมูลล่าสุด
+    const [rows]: any = await conn.query(
+      `SELECT s.*, cb.batch_name, c.course_name, cb.course_id 
+       FROM students s
+       LEFT JOIN course_batches cb ON s.batch_id = cb.id
+       LEFT JOIN courses c ON cb.course_id = c.id
+       WHERE s.id = ?`,
+      [student_id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "ไม่พบข้อมูลผู้เรียน",
+      });
+    }
+
+    const student = rows[0];
+
+    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
+    const token = jwt.sign(
+      {
+        student_id: student.id,
+        student_code: student.student_code,
+        batch_id: student.batch_id,
+        email: student.email,
+      },
+      secretKey,
+      { expiresIn: "7d" }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว",
+      token,
+      isProfileComplete: true,
+      studentData: {
+        student_id: student.id,
+        batch_id: student.batch_id,
+        student_code: student.student_code,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        rank_name: student.rank_name,
+        affiliation: student.affiliation,
+        email: student.email,
+        phone: student.phone,
+        picture: student.picture,
+        course_name: student.course_name || "",
+        batch_name: student.batch_name || "",
+        course_id: student.course_id,
+        profile_completed: 1,
+      },
+    });
+  } catch (error: any) {
+    console.error("Student Complete Profile Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการบันทึกข้อมูลส่วนตัว",
     });
   }
 };
