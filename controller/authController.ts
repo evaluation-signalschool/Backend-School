@@ -1,17 +1,20 @@
 import { Request, Response } from "express";
 import { conn } from "../dbconn";
-import bcrypt from "bcrypt"; 
-import jwt from "jsonwebtoken"; 
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID); 
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 export const studentLogin = async (
   req: Request,
   res: Response,
 ): Promise<Response> => {
-  const { batch_id, student_code, identifier, email, phone, password } = req.body;
-  const loginIdentifier = String(identifier || student_code || email || phone || "").trim();
+  const { batch_id, student_code, identifier, email, phone, password } =
+    req.body;
+  const loginIdentifier = String(
+    identifier || student_code || email || phone || "",
+  ).trim();
 
   try {
     if (!loginIdentifier || !password) {
@@ -42,11 +45,12 @@ export const studentLogin = async (
 
     const student = rows[0];
 
-    // 2. ตรวจสอบรหัสผ่าน 
+    // 2. ตรวจสอบรหัสผ่าน
     let isMatch = false;
     const isBcrypt =
       typeof student.password === "string" &&
-      (student.password.startsWith("$2a$") || student.password.startsWith("$2b$"));
+      (student.password.startsWith("$2a$") ||
+        student.password.startsWith("$2b$"));
 
     if (isBcrypt) {
       isMatch = await bcrypt.compare(password, student.password);
@@ -61,7 +65,10 @@ export const studentLogin = async (
             student.id,
           ]);
         } catch (upgradeErr) {
-          console.error("Auto upgrade student password hash error:", upgradeErr);
+          console.error(
+            "Auto upgrade student password hash error:",
+            upgradeErr,
+          );
         }
       }
     }
@@ -74,7 +81,8 @@ export const studentLogin = async (
     }
 
     // 3. สร้าง Token เพื่อให้นักเรียนเอาไปใช้ดูคะแนน
-    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
 
     const token = jwt.sign(
       {
@@ -118,10 +126,17 @@ export const studentLogin = async (
  */
 export const studentGoogleLogin = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<Response> => {
   try {
-    const { credential, batch_id, google_id: rawGoogleId, email: rawEmail, name: rawName, picture: rawPicture } = req.body;
+    const {
+      credential,
+      batch_id,
+      google_id: rawGoogleId,
+      email: rawEmail,
+      name: rawName,
+      picture: rawPicture,
+    } = req.body;
 
     let googleId = rawGoogleId || "";
     let email = (rawEmail || "").trim();
@@ -147,7 +162,9 @@ export const studentGoogleLogin = async (
         try {
           const parts = credential.split(".");
           if (parts.length === 3) {
-            const decoded = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+            const decoded = JSON.parse(
+              Buffer.from(parts[1], "base64").toString("utf-8"),
+            );
             googleId = decoded.sub || googleId;
             email = decoded.email || email;
             name = decoded.name || name;
@@ -172,7 +189,7 @@ export const studentGoogleLogin = async (
       // ค้นหาว่านักเรียนอีเมลนี้เคยลงทะเบียนในรุ่นไหนหรือไม่
       const [existingEnrollments]: any = await conn.query(
         `SELECT batch_id FROM students WHERE (LOWER(email) = LOWER(?) OR (google_id = ? AND google_id != '')) ORDER BY id DESC LIMIT 1`,
-        [email, googleId || ""]
+        [email, googleId || ""],
       );
       if (existingEnrollments.length > 0) {
         batchId = Number(existingEnrollments[0].batch_id);
@@ -193,15 +210,16 @@ export const studentGoogleLogin = async (
        LEFT JOIN courses c ON cb.course_id = c.id
        WHERE s.batch_id = ? AND (((s.google_id = ? AND s.google_id != '') OR LOWER(s.email) = LOWER(?)))
        LIMIT 1`,
-      [batchId, googleId, email]
+      [batchId, googleId, email],
     );
 
     let student: any = null;
     let isProfileComplete = false;
 
     if (rows.length === 0) {
-      // 🌟 ครั้งแรกที่ล็อกอินเข้ามาในรุ่นนี้: บันทึกข้อมูลเริ่มต้นทันที (เก็บข้อมูลครั้งแรกตอนที่ล้อกอินเข้ามา)
-      // แกะชื่อและนามสกุลจากชื่อใน Google
+      //  ครั้งแรกที่ล็อกอินเข้ามาในรุ่นนี้: ยังไม่บันทึก (INSERT) ลงฐานข้อมูลเด็ดขาด!
+      // เพื่อป้องกันไม่ให้เกิดแถวข้อมูลว่างค้างในดาต้าเบส หากผู้เรียนกดยกเลิก กดกลับ หรือปิดหน้าเว็บ
+      // ข้อมูลจะถูกบันทึกลงฐานข้อมูลจริง เมื่อผู้เรียนกดยืนยันข้อมูลในหน้ากรอกข้อมูล (studentCompleteProfile) เท่านั้น
       const parts = name.split(/\s+/).filter(Boolean);
       let firstName = name || email.split("@")[0];
       let lastName = "";
@@ -210,31 +228,39 @@ export const studentGoogleLogin = async (
         firstName = parts.join(" ");
       }
 
-      // คำนวณรหัสนักเรียน (student_code) อัตโนมัติในรุ่นนี้
-      const [countResult]: any = await conn.query(
-        "SELECT COUNT(*) as count FROM students WHERE batch_id = ?",
-        [batchId]
-      );
-      const studentCode = (Number(countResult[0]?.count || 0) + 1).toString();
-
-      const [insertRes]: any = await conn.query(
-        `INSERT INTO students 
-         (batch_id, student_code, password, rank_name, first_name, last_name, affiliation, email, google_id, phone, profile_completed, picture) 
-         VALUES (?, ?, NULL, '', ?, ?, '', ?, ?, '', 0, ?)`,
-        [batchId, studentCode, firstName, lastName, email, googleId, picture]
-      );
-
-      const insertedId = insertRes.insertId;
-      const [newRows]: any = await conn.query(
-        `SELECT s.*, cb.batch_name, c.course_name, cb.course_id 
-         FROM students s
-         LEFT JOIN course_batches cb ON s.batch_id = cb.id
+      // ดึงข้อมูลรุ่นและหลักสูตรเพื่อนำไปแสดงผลที่หน้าฟอร์ม
+      const [batchRows]: any = await conn.query(
+        `SELECT cb.id as batch_id, cb.batch_name, cb.course_id, c.course_name 
+         FROM course_batches cb
          LEFT JOIN courses c ON cb.course_id = c.id
-         WHERE s.id = ?`,
-        [insertedId]
+         WHERE cb.id = ?`,
+        [batchId],
       );
-      student = newRows[0];
-      isProfileComplete = false;
+      const batchInfo = batchRows[0] || {};
+
+      return res.status(200).json({
+        success: true,
+        message: "กรุณากรอกข้อมูลส่วนตัวเพื่อยืนยันตัวตน",
+        isProfileComplete: false,
+        isNewStudent: true,
+        studentData: {
+          student_id: 0,
+          batch_id: batchId,
+          student_code: "",
+          first_name: firstName,
+          last_name: lastName,
+          rank_name: "",
+          affiliation: "",
+          email: email,
+          google_id: googleId,
+          phone: "",
+          picture: picture,
+          course_name: batchInfo.course_name || "",
+          batch_name: batchInfo.batch_name || "",
+          course_id: batchInfo.course_id || null,
+          profile_completed: 0,
+        },
+      });
     } else {
       student = rows[0];
 
@@ -253,33 +279,67 @@ export const studentGoogleLogin = async (
       }
       if (updates.length > 0) {
         updateParams.push(student.id);
-        await conn.query(`UPDATE students SET ${updates.join(", ")} WHERE id = ?`, updateParams);
+        await conn.query(
+          `UPDATE students SET ${updates.join(", ")} WHERE id = ?`,
+          updateParams,
+        );
       }
 
       // ตรวจสอบว่ากรอกข้อมูลครบแล้วหรือยัง
       isProfileComplete = Boolean(
         student.profile_completed === 1 ||
         (student.rank_name &&
-         student.rank_name.trim() !== "" &&
-         student.first_name &&
-         student.first_name.trim() !== "" &&
-         student.affiliation &&
-         student.affiliation.trim() !== "" &&
-         student.phone &&
-         student.phone.trim() !== "" &&
-         student.email &&
-         student.email.trim() !== "")
+          student.rank_name.trim() !== "" &&
+          student.first_name &&
+          student.first_name.trim() !== "" &&
+          student.affiliation &&
+          student.affiliation.trim() !== "" &&
+          student.phone &&
+          student.phone.trim() !== "" &&
+          student.email &&
+          student.email.trim() !== ""),
       );
 
       // ถ้าข้อมูลครบแล้ว แต่ profile_completed ยังเป็น 0 ให้เซ็ตเป็น 1
       if (isProfileComplete && student.profile_completed !== 1) {
-        await conn.query("UPDATE students SET profile_completed = 1 WHERE id = ?", [student.id]);
+        await conn.query(
+          "UPDATE students SET profile_completed = 1 WHERE id = ?",
+          [student.id],
+        );
         student.profile_completed = 1;
+      }
+
+      // ถ้ายังไม่ครบถ้วน (เช่น ข้อมูลไม่สมบูรณ์ หรือเป็นข้อมูลเก่าที่ยังไม่ได้ยืนยัน)
+      if (!isProfileComplete) {
+        return res.status(200).json({
+          success: true,
+          message: "กรุณากรอกข้อมูลส่วนตัวเพื่อยืนยันตัวตน",
+          isProfileComplete: false,
+          isNewStudent: false,
+          studentData: {
+            student_id: student.id,
+            batch_id: student.batch_id,
+            student_code: student.student_code || "",
+            first_name: student.first_name,
+            last_name: student.last_name,
+            rank_name: student.rank_name || "",
+            affiliation: student.affiliation || "",
+            email: student.email,
+            google_id: student.google_id || googleId,
+            phone: student.phone || "",
+            picture: student.picture || picture,
+            course_name: student.course_name || "",
+            batch_name: student.batch_name || "",
+            course_id: student.course_id,
+            profile_completed: 0,
+          },
+        });
       }
     }
 
-    // สร้าง JWT Token เพื่อให้นักเรียนนำไปใช้เข้าดูคะแนน
-    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
+    // สร้าง JWT Token เพื่อให้นักเรียนนำไปใช้เข้าดูคะแนน (เฉพาะกรณีที่กรอกข้อมูลครบถ้วนแล้วเท่านั้น)
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
     const token = jwt.sign(
       {
         student_id: student.id,
@@ -288,13 +348,13 @@ export const studentGoogleLogin = async (
         email: student.email,
       },
       secretKey,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     return res.status(200).json({
       success: true,
       message: "เข้าสู่ระบบด้วย Google สำเร็จ",
-      isProfileComplete,
+      isProfileComplete: true,
       token,
       studentData: {
         student_id: student.id,
@@ -310,7 +370,7 @@ export const studentGoogleLogin = async (
         course_name: student.course_name || "",
         batch_name: student.batch_name || "",
         course_id: student.course_id,
-        profile_completed: student.profile_completed || 0,
+        profile_completed: student.profile_completed || 1,
       },
     });
   } catch (error: any) {
@@ -327,22 +387,27 @@ export const studentGoogleLogin = async (
  */
 export const studentCompleteProfile = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<Response> => {
   try {
-    const { student_id, rank_name, first_name, last_name, affiliation, phone } = req.body;
-
-    if (!student_id) {
-      return res.status(400).json({
-        success: false,
-        message: "ไม่พบรหัสผู้เรียน (student_id)",
-      });
-    }
+    const {
+      student_id,
+      batch_id,
+      rank_name,
+      first_name,
+      last_name,
+      affiliation,
+      phone,
+      email,
+      google_id,
+      picture,
+    } = req.body;
 
     // ตรวจสอบความถูกต้องของยศ: ห้ามมีตัวเลข หรือเครื่องหมาย @
     if (
       !rank_name ||
-      (/[0-9\u0E50-\u0E59]/.test(rank_name) || rank_name.includes("@"))
+      /[0-9\u0E50-\u0E59]/.test(rank_name) ||
+      rank_name.includes("@")
     ) {
       return res.status(400).json({
         success: false,
@@ -353,8 +418,10 @@ export const studentCompleteProfile = async (
     // ตรวจสอบชื่อและนามสกุล: ห้ามมีตัวเลข หรือสัญลักษณ์ @
     if (
       !first_name ||
-      (/[0-9\u0E50-\u0E59]/.test(first_name) || first_name.includes("@")) ||
-      (last_name && (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
+      /[0-9\u0E50-\u0E59]/.test(first_name) ||
+      first_name.includes("@") ||
+      (last_name &&
+        (/[0-9\u0E50-\u0E59]/.test(last_name) || last_name.includes("@")))
     ) {
       return res.status(400).json({
         success: false,
@@ -377,13 +444,111 @@ export const studentCompleteProfile = async (
       });
     }
 
-    // อัปเดตข้อมูลผู้เรียน และทำเครื่องหมาย profile_completed = 1
-    await conn.query(
-      `UPDATE students 
-       SET rank_name = ?, first_name = ?, last_name = ?, affiliation = ?, phone = ?, profile_completed = 1
-       WHERE id = ?`,
-      [rank_name.trim(), first_name.trim(), (last_name || "").trim(), affiliation.trim(), cleanedPhone, student_id]
-    );
+    let finalStudentId = Number(student_id) || 0;
+
+    if (finalStudentId > 0) {
+      // ตรวจสอบว่ามีแถวในตาราง students หรือไม่
+      const [existingRows]: any = await conn.query(
+        "SELECT id FROM students WHERE id = ?",
+        [finalStudentId],
+      );
+
+      if (existingRows.length > 0) {
+        // อัปเดตข้อมูลผู้เรียน และทำเครื่องหมาย profile_completed = 1
+        await conn.query(
+          `UPDATE students 
+           SET rank_name = ?, first_name = ?, last_name = ?, affiliation = ?, phone = ?, profile_completed = 1,
+               picture = COALESCE(NULLIF(picture, ''), ?),
+               google_id = COALESCE(NULLIF(google_id, ''), ?)
+           WHERE id = ?`,
+          [
+            rank_name.trim(),
+            first_name.trim(),
+            (last_name || "").trim(),
+            affiliation.trim(),
+            cleanedPhone,
+            picture || "",
+            google_id || "",
+            finalStudentId,
+          ],
+        );
+      } else {
+        finalStudentId = 0;
+      }
+    }
+
+    if (finalStudentId === 0) {
+      //  บันทึก (INSERT) ลงฐานข้อมูลจริงเมื่อกดยืนยันข้อมูลในหน้านี้
+      const finalBatchId = Number(batch_id) || 0;
+      const cleanEmail = (email || "").trim();
+
+      if (!finalBatchId) {
+        return res.status(400).json({
+          success: false,
+          message: "ไม่พบข้อมูลรุ่น/หลักสูตร (batch_id)",
+        });
+      }
+
+      if (!cleanEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "ไม่พบข้อมูลอีเมล",
+        });
+      }
+
+      // ตรวจสอบอีกครั้งว่ามีผู้ใช้นี้อยู่แล้วในรุ่นหรือไม่ เพื่อไม่ให้เกิดแถวซ้ำ
+      const [duplicateCheck]: any = await conn.query(
+        `SELECT id FROM students WHERE batch_id = ? AND (((google_id = ? AND google_id != '') OR LOWER(email) = LOWER(?))) LIMIT 1`,
+        [finalBatchId, google_id || "", cleanEmail],
+      );
+
+      if (duplicateCheck.length > 0) {
+        finalStudentId = duplicateCheck[0].id;
+        await conn.query(
+          `UPDATE students 
+           SET rank_name = ?, first_name = ?, last_name = ?, affiliation = ?, phone = ?, profile_completed = 1,
+               picture = COALESCE(NULLIF(picture, ''), ?),
+               google_id = COALESCE(NULLIF(google_id, ''), ?)
+           WHERE id = ?`,
+          [
+            rank_name.trim(),
+            first_name.trim(),
+            (last_name || "").trim(),
+            affiliation.trim(),
+            cleanedPhone,
+            picture || "",
+            google_id || "",
+            finalStudentId,
+          ],
+        );
+      } else {
+        // คำนวณรหัสนักเรียน (student_code) อัตโนมัติในรุ่นนี้
+        const [countResult]: any = await conn.query(
+          "SELECT COUNT(*) as count FROM students WHERE batch_id = ?",
+          [finalBatchId],
+        );
+        const studentCode = (Number(countResult[0]?.count || 0) + 1).toString();
+
+        const [insertRes]: any = await conn.query(
+          `INSERT INTO students 
+           (batch_id, student_code, password, rank_name, first_name, last_name, affiliation, email, google_id, phone, profile_completed, picture) 
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          [
+            finalBatchId,
+            studentCode,
+            rank_name.trim(),
+            first_name.trim(),
+            (last_name || "").trim(),
+            affiliation.trim(),
+            cleanEmail,
+            google_id || "",
+            cleanedPhone,
+            picture || "",
+          ],
+        );
+        finalStudentId = insertRes.insertId;
+      }
+    }
 
     // ดึงข้อมูลล่าสุด
     const [rows]: any = await conn.query(
@@ -392,7 +557,7 @@ export const studentCompleteProfile = async (
        LEFT JOIN course_batches cb ON s.batch_id = cb.id
        LEFT JOIN courses c ON cb.course_id = c.id
        WHERE s.id = ?`,
-      [student_id]
+      [finalStudentId],
     );
 
     if (rows.length === 0) {
@@ -404,7 +569,8 @@ export const studentCompleteProfile = async (
 
     const student = rows[0];
 
-    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
     const token = jwt.sign(
       {
         student_id: student.id,
@@ -413,7 +579,7 @@ export const studentCompleteProfile = async (
         email: student.email,
       },
       secretKey,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     return res.status(200).json({
@@ -447,6 +613,36 @@ export const studentCompleteProfile = async (
   }
 };
 
+/**
+ *  ยกเลิกการกรอกข้อมูล Google และลบข้อมูลชั่วคราวที่ไม่สมบูรณ์ออกจากฐานข้อมูล
+ */
+export const studentCancelGoogleLogin = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  try {
+    const { student_id } = req.body;
+    const id = Number(student_id);
+    if (id > 0) {
+      // ลบเฉพาะรายการที่ profile_completed = 0 (ยังกรอกข้อมูลไม่สมบูรณ์ หรือยกเลิก) เพื่อไม่ให้เปลืองพื้นที่ DB
+      await conn.query(
+        "DELETE FROM students WHERE id = ? AND profile_completed = 0",
+        [id],
+      );
+    }
+    return res.status(200).json({
+      success: true,
+      message: "ยกเลิกเรียบร้อย",
+    });
+  } catch (error: any) {
+    console.error("Student Cancel Google Login Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการยกเลิก",
+    });
+  }
+};
+
 import { logAdminActivity } from "../utils/activityLogger";
 export const adminLogin = async (
   req: Request,
@@ -466,7 +662,10 @@ export const adminLogin = async (
 
     // 2. ค้นหาแอดมินจาก username หรือ email
     const sql = `SELECT id, username, email, password, name, role, status FROM admin WHERE username = ? OR email = ? LIMIT 1`;
-    const [rows]: any = await conn.query(sql, [loginIdentifier, loginIdentifier]);
+    const [rows]: any = await conn.query(sql, [
+      loginIdentifier,
+      loginIdentifier,
+    ]);
 
     if (rows.length === 0) {
       return res.status(401).json({
@@ -487,7 +686,10 @@ export const adminLogin = async (
 
     // 3. ตรวจสอบรหัสผ่าน (รองรับทั้ง bcrypt และ plain text fallback)
     let isMatch = false;
-    if (typeof admin.password === "string" && (admin.password.startsWith("$2a$") || admin.password.startsWith("$2b$"))) {
+    if (
+      typeof admin.password === "string" &&
+      (admin.password.startsWith("$2a$") || admin.password.startsWith("$2b$"))
+    ) {
       isMatch = await bcrypt.compare(password, admin.password);
     } else {
       isMatch = password === admin.password;
@@ -502,13 +704,16 @@ export const adminLogin = async (
 
     // อัปเดตเวลาเข้าสู่ระบบล่าสุด
     try {
-      await conn.query("UPDATE admin SET last_login_at = NOW() WHERE id = ?", [admin.id]);
+      await conn.query("UPDATE admin SET last_login_at = NOW() WHERE id = ?", [
+        admin.id,
+      ]);
     } catch (e) {
       console.error("Failed to update last_login_at:", e);
     }
 
     // 4. สร้าง Token ให้แอดมินเอาไปใช้จัดการระบบ
-    const secretKey = process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
+    const secretKey =
+      process.env.JWT_SECRET || "signalxnc@evaluation-signalschool";
 
     const adminUsername = admin.username || "admin";
     const adminRole = admin.role || "admin";
@@ -519,7 +724,7 @@ export const adminLogin = async (
       rememberMe === true ||
       rememberMe === "true" ||
       rememberMe === 1 ||
-      rememberMe === "1"
+      rememberMe === "1",
     );
     const expiresIn = isRemember ? "30d" : "1d";
 

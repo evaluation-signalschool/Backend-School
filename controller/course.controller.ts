@@ -304,28 +304,6 @@ export const toggleBatchActive = async (req: Request, res: Response) => {
   }
 };
 
-// เปิด-ปิดการรับสมัคร (Toggle Registration)
-export const toggleRegistration = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { is_registration_open } = req.body;
-  
-  try {
-    const [result]: any = await conn.query(
-      "UPDATE course_batches SET is_registration_open = ? WHERE id = ?",
-      [is_registration_open ? 1 : 0, id]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "ไม่พบรุ่นที่ต้องการแก้ไข" });
-    }
-
-    res.json({ success: true, message: "เปลี่ยนสถานะการรับสมัครสำเร็จ" });
-  } catch (error) {
-    console.error("Error toggling registration:", error);
-    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการเปลี่ยนสถานะ" });
-  }
-};
-
 // ลบรุ่น (Batch)
 export const deleteBatch = async (req: Request, res: Response) => {
   const { id } = req.params;
