@@ -611,7 +611,7 @@ export const updateBatchAffiliations = async (
         adminName: user.name,
         adminUsername: user.username,
         action: "UPDATE_STUDENT",
-        actionCategory: "STUDENT",
+        category: "STUDENT",
         details: `อัปเดตสังกัดของนักเรียนจากการเลือกลงหน่วย จำนวน ${updatedCount} นาย`,
         ipAddress: req.ip || req.socket.remoteAddress,
       }).catch((err) => console.error("Logging error:", err));

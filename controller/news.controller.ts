@@ -3,39 +3,34 @@ import { conn } from "../dbconn";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { supabase } from "../config/supabase";
+import cloudinary from "../config/cloudinary";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { logAdminActivity } from "../utils/activityLogger";
 
-// multer config: ใช้ memoryStorage เพื่อเก็บไฟล์ใน RAM ชั่วคราวก่อนส่งไป Supabase
+// multer config: ใช้ memoryStorage เพื่อเก็บไฟล์ใน RAM ชั่วคราวก่อนส่งไป Cloudinary
 const storage = multer.memoryStorage();
 export const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
 });
 
-// Helper function สำหรับอัปโหลดขึ้น Supabase Storage
-const uploadToSupabase = async (buffer: Buffer, originalName: string, mimetype: string): Promise<string> => {
-  // สร้างชื่อไฟล์ไม่ซ้ำกัน (ลบ news/ ออกเพื่อให้ไปอยู่หน้าแรกของ bucket เลย จะได้ไม่บั๊ก)
-  const fileName = `${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.]/g, "_")}`;
-  
-  const { data, error } = await supabase.storage
-    .from('news') // ชื่อ bucket ใน Supabase
-    .upload(fileName, buffer, {
-      contentType: mimetype,
-      upsert: false
-    });
-
-  if (error) {
-    throw error;
-  }
-
-  // ดึง URL สำหรับเปิดดูไฟล์ (Public URL)
-  const { data: publicUrlData } = supabase.storage
-    .from('news')
-    .getPublicUrl(fileName);
-
-  return publicUrlData.publicUrl;
+// Helper function สำหรับอัปโหลดขึ้น Cloudinary (โฟลเดอร์ news)
+const uploadToCloudinary = (buffer: Buffer, originalName: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const cleanName = originalName.replace(/[^a-zA-Z0-9.]/g, "_");
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "news",
+        resource_type: "auto",
+        public_id: `${Date.now()}-${cleanName}`,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result?.secure_url || "");
+      }
+    );
+    uploadStream.end(buffer);
+  });
 };
 
 // ─── GET: ดึงข่าวสารทั้งหมด ───────────────────────────────
@@ -60,7 +55,7 @@ export const addNews = async (req: Request, res: Response): Promise<void> => {
     let file_name = req.body.file_name ? String(req.body.file_name).trim() : null;
 
     if (file) {
-      file_url = await uploadToSupabase(file.buffer, file.originalname, file.mimetype);
+      file_url = await uploadToCloudinary(file.buffer, file.originalname);
       file_name = file.originalname;
     } else if (file_url) {
       if (!file_name) {
@@ -146,8 +141,8 @@ export const updateNews = async (req: Request, res: Response): Promise<void> => 
     let fileName: string | null | undefined = req.body.file_name !== undefined ? (req.body.file_name ? String(req.body.file_name).trim() : null) : undefined;
 
     if (req.file) {
-      // อัปโหลดไฟล์ใหม่ขึ้น Supabase
-      fileUrl = await uploadToSupabase(req.file.buffer, req.file.originalname, req.file.mimetype);
+      // อัปโหลดไฟล์ใหม่ขึ้น Cloudinary
+      fileUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname);
       fileName = req.file.originalname;
 
       // จัดการลบไฟล์เก่า (ถ้าเป็น Local file)
