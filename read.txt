@@ -2,6 +2,7 @@ run
 
 npx tsx server.ts
 
+
 npx tsx watch server.ts
 
 npm install mysql2 dotenv
@@ -9,5 +10,5 @@ npm install mysql2 dotenv
 npm install -D @types/node
 
 git add .
-git commit -m "่อัปเดต"
+git commit -m "ข้อความอัปเดต"
 git push work main
