@@ -49,165 +49,10 @@ export const generateAiSummary = async (req: Request, res: Response) => {
         ? ((decreasedCount / totalSubjects) * 100).toFixed(1)
         : "0";
 
-    // ตรวจสอบ Google Gemini API Key
-    const apiKey = userApiKey || process.env.GEMINI_API_KEY;
     let executiveSummary = "";
     let actionPlans: string[] = [];
 
-    if (apiKey) {
-      try {
-        const subjectListFormatted =
-          Array.isArray(subjectBreakdown) && subjectBreakdown.length > 0
-            ? subjectBreakdown
-                .map((item: any, idx: number) => {
-                  const diffStr =
-                    item.diff !== null && item.diff !== undefined
-                      ? item.diff >= 0
-                        ? `+${item.diff}`
-                        : `${item.diff}`
-                      : "-";
-                  return `${idx + 1}. ${item.name}: ${batch1Name}=${item.prevScore ?? "-"}, ${batch2Name}=${item.currScore ?? "-"} (ผลต่าง: ${diffStr})`;
-                })
-                .join("\n")
-            : "ไม่มีรายละเอียดรายวิชา";
-
-        let prompt = "";
-        if (mode === "refine_formal") {
-          prompt = `
-คุณคือนายทหารฝ่ายวิชาการอาวุโส โรงเรียนทหารสื่อสาร
-โปรดปรับปรุงข้อความต่อไปนี้ให้เป็น "ภาษาราชการทหารระดับสูง สละสลวย ถูกต้องตามแบบแผนราชการ และน่าเชื่อถือทางวิชาการ":
-
-ข้อความเดิม:
-${currentExecutiveSummary}
-
-ข้อเสนอแนะเดิม:
-${currentActionPlan}
-
-ข้อมูลประกอบ:
-หลักสูตร: ${courseName} (${cohortTitle || cohortKey})
-คะแนนเฉลี่ย: ${batch1Name}=${batch1Avg}, ${batch2Name}=${batch2Avg} (ผลต่าง: ${diff ? (Number(diff) >= 0 ? "+" + diff : diff) : "-"})
-
-ตอบในรูปแบบ JSON เท่านั้น:
-{
-  "executive_summary": "ข้อความที่ขัดเกลาสำนวนทางการแล้ว 2-3 ย่อหน้า",
-  "action_plan": [ "ข้อเสนอแนะที่ 1", "ข้อเสนอแนะที่ 2", "ข้อเสนอแนะที่ 3", "ข้อเสนอแนะที่ 4" ]
-}
-`;
-        } else if (mode === "summarize_short") {
-          prompt = `
-คุณคือนายทหารฝ่ายวิชาการ โรงเรียนทหารสื่อสาร
-โปรดสรุปย่อบทวิเคราะห์ต่อไปนี้ให้ "กระชับ ตรงประเด็น เหมาะสำหรับรายงานสรุปผู้บังคับบัญชา (อ่านจบใน 30 วินาที)" โดยคงตัวเลขสถิติสำคัญไว้:
-
-บทวิเคราะห์เดิม:
-${currentExecutiveSummary}
-
-ข้อมูลหลักสูตร: ${courseName} (${cohortTitle || cohortKey})
-คะแนนเฉลี่ย: ${batch1Name}=${batch1Avg}, ${batch2Name}=${batch2Avg} (ผลต่าง: ${diff ? (Number(diff) >= 0 ? "+" + diff : diff) : "-"})
-
-ตอบในรูปแบบ JSON เท่านั้น:
-{
-  "executive_summary": "บทสรุปย่อกระชับ 1 ย่อหน้า",
-  "action_plan": [ "ข้อเสนอแนะสำคัญ 3 ข้อ" ]
-}
-`;
-        } else {
-          let styleText =
-            "รายงานการประกันคุณภาพการศึกษาฉบับสมบูรณ์ (ครอบคลุมผลสัมฤทธิ์ จุดแข็ง ประเด็นเฝ้าระวัง และแผนพัฒนา 4 มิติ)";
-          if (analysisStyle === "executive") {
-            styleText =
-              "บทสรุปผู้บริหาร (Executive Briefing) สรุปสาระสำคัญ ตัวเลขสถิติ และทิศทางพัฒนาการ";
-          } else if (analysisStyle === "action") {
-            styleText =
-              "การวิเคราะห์เชิงปฏิบัติการและการแก้ปัญหา (Action-Oriented) เน้นเจาะลึกวิชาที่คะแนนลดลง และมาตรการแก้ไขอย่างเป็นรูปธรรม";
-          }
-
-          prompt = `
-คุณคือนายทหารฝ่ายวิชาการระดับอาวุโสและผู้เชี่ยวชาญการประเมินผลการฝึกอบรม โรงเรียนทหารสื่อสาร กรมการทหารสื่อสาร
-จงทำการวิเคราะห์ผลการประเมินและการฝึกอบรม โดยเน้นสไตล์: ${styleText}
-
-ข้อมูลสถิติ:
-- หลักสูตร: ${courseName}
-- มุมมอง: ${cohortTitle || cohortKey}
-- คะแนนเฉลี่ยรวม ${batch1Name}: ${batch1Avg} คะแนน
-- คะแนนเฉลี่ยรวม ${batch2Name}: ${batch2Avg} คะแนน
-- ผลต่างคะแนนเฉลี่ยรวม: ${diff ? (Number(diff) >= 0 ? "+" + diff : diff) : "-"} คะแนน
-- จำนวนรายวิชาทั้งหมด: ${totalSubjects} วิชา
-- วิชาที่คะแนนเพิ่มขึ้น: ${increasedCount} วิชา (${improvedPercent}%)
-- วิชาที่คะแนนลดลง: ${decreasedCount} วิชา (${declinedPercent}%)
-- วิชาที่มีพัฒนาการสูงสุด: ${topImproved ? `${topImproved.name} (+${topImproved.diff} คะแนน)` : "ไม่มี"}
-- วิชาที่ต้องติดตาม: ${topDeclined ? `${topDeclined.name} (${topDeclined.diff} คะแนน)` : "ไม่มี"}
-- รายวิชาที่มีคะแนนสูงสุด: ${topSubjects.map((x: any) => `${x.name} (${x.score})`).join(", ") || "ไม่มี"}
-- รายวิชาที่มีคะแนนต่ำสุด: ${bottomSubjects.map((x: any) => `${x.name} (${x.score})`).join(", ") || "ไม่มี"}
-
-คะแนนรายวิชา:
-${subjectListFormatted}
-
-ตอบในรูปแบบ JSON เท่านั้น:
-{
-  "executive_summary": "บทวิเคราะห์เชิงลึกตามสไตล์ที่กำหนด ภาษาทางการ 2-3 ย่อหน้า",
-  "action_plan": [
-    "1. [ด้านหลักสูตร] ...",
-    "2. [ด้านการจัดการเรียนการสอน] ...",
-    "3. [ด้านการฝึกปฏิบัติและเครื่องมือ] ...",
-    "4. [ด้านการวัดและประเมินผล] ...",
-    "5. [ด้านการติดตามผล] ..."
-  ]
-}
-`;
-        }
-
-        const modelList = [
-          "gemini-3.6-flash",
-          "gemini-3.7-flash",
-          "gemini-3.8-flash",
-          "gemini-flash-latest",
-          "gemini-pro-latest",
-          "gemini-2.5-flash",
-          "gemini-2.0-flash",
-        ];
-
-        for (const model of modelList) {
-          try {
-            const geminiRes = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  contents: [{ parts: [{ text: prompt }] }],
-                  generationConfig: {
-                    temperature: 0.2,
-                    responseMimeType: "application/json",
-                  },
-                }),
-              },
-            );
-
-            if (geminiRes.ok) {
-              const geminiData = await geminiRes.json();
-              const textResponse =
-                geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (textResponse) {
-                const parsed = JSON.parse(textResponse);
-                executiveSummary = parsed.executive_summary || "";
-                actionPlans = parsed.action_plan || [];
-                if (executiveSummary) break;
-              }
-            }
-          } catch (mErr) {
-            console.warn(`Model ${model} failed, trying next:`, mErr);
-          }
-        }
-      } catch (aiErr) {
-        console.warn(
-          "Gemini API call failed, falling back to dynamic rule engine:",
-          aiErr,
-        );
-      }
-    }
-
-    if (!executiveSummary) {
-      const isCompare = cohortKey && cohortKey.startsWith("compare:");
+    const isCompare = cohortKey && cohortKey.startsWith("compare:");
       const trendVerb =
         diff && Number(diff) > 0
           ? "มีพัฒนาการในภาพรวมที่เพิ่มขึ้นอย่างชัดเจน"
@@ -270,7 +115,6 @@ ${subjectListFormatted}
           `[ด้านการติดตามผล] ประสานงานกับหน่วยต้นสังกัดเพื่อติดตามผลการปฏิบัติงานจริงของกำลังพลในระยะ 6 เดือน`,
         ];
       }
-    }
 
     return res.status(200).json({
       success: true,
@@ -282,7 +126,7 @@ ${subjectListFormatted}
     console.error("Error in generateAiSummary:", error);
     return res
       .status(500)
-      .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผล AI" });
+      .json({ success: false, message: "เกิดข้อผิดพลาดในการประมวลผลบทสรุป" });
   }
 };
 

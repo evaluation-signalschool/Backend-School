@@ -14,7 +14,7 @@ export const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
 });
 
-// Helper function สำหรับอัปโหลดขึ้น Cloudinary
+// Helper function สำหรับอัปโหลดขึ้น Cloudinary (โฟลเดอร์ news)
 const uploadToCloudinary = (buffer: Buffer, originalName: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     const cleanName = originalName.replace(/[^a-zA-Z0-9.]/g, "_");
