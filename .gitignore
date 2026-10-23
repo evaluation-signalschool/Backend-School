@@ -1,2 +1,4 @@
 .env
 node_modules
+config/google-key.json
+*.backup
