@@ -3,6 +3,27 @@ import { Readable } from "stream";
 import fs from "fs";
 import path from "path";
 
+function resolveKeyFilePath(): string | null {
+  const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
+  const fileName = keyFile ? path.basename(keyFile) : "google-key.json";
+
+  const candidates: string[] = [];
+  if (keyFile) {
+    candidates.push(path.isAbsolute(keyFile) ? keyFile : path.resolve(process.cwd(), keyFile));
+  }
+  candidates.push(path.resolve(process.cwd(), "config", fileName));
+  candidates.push(path.resolve(process.cwd(), fileName));
+  candidates.push(`/etc/secrets/${fileName}`);
+  candidates.push("/etc/secrets/google-key.json");
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /**
  * ตรวจสอบว่าระบบมีการตั้งค่า Google Drive หรือไม่
  */
@@ -11,12 +32,9 @@ export function isGoogleDriveConfigured(): boolean {
     return true;
   }
 
-  const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
-  if (keyFile) {
-    const resolvedPath = path.isAbsolute(keyFile) ? keyFile : path.resolve(process.cwd(), keyFile);
-    if (fs.existsSync(resolvedPath)) {
-      return true;
-    }
+  const resolvedPath = resolveKeyFilePath();
+  if (resolvedPath) {
+    return true;
   }
 
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -29,16 +47,13 @@ export function isGoogleDriveConfigured(): boolean {
  */
 function getGoogleDriveClient() {
   let auth;
-  const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
+  const resolvedPath = resolveKeyFilePath();
 
-  if (keyFile) {
-    const resolvedPath = path.isAbsolute(keyFile) ? keyFile : path.resolve(process.cwd(), keyFile);
-    if (fs.existsSync(resolvedPath)) {
-      auth = new google.auth.GoogleAuth({
-        keyFile: resolvedPath,
-        scopes: ["https://www.googleapis.com/auth/drive"],
-      });
-    }
+  if (resolvedPath) {
+    auth = new google.auth.GoogleAuth({
+      keyFile: resolvedPath,
+      scopes: ["https://www.googleapis.com/auth/drive"],
+    });
   }
 
   if (!auth) {
