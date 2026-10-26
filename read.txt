@@ -10,5 +10,5 @@ npm install mysql2 dotenv
 npm install -D @types/node
 
 git add .
-git commit -m "ข้อความอัปเดต"
+git commit -m "update new"
 git push work main

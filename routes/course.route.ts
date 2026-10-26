@@ -15,7 +15,7 @@ import {
   generateAiSummary,
   saveSummary,
   getSavedSummary
-} from "../controller/ai-summary.controller";
+} from "../controller/executive-summary.controller";
 import {
   addSubject,
   addSubjectGroup,
