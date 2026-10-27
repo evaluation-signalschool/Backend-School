@@ -9,9 +9,9 @@ const GRADING_CRITERIA = [
   { grade_name: "A", grade_point: 4.0, min_percent: 91 },
   { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
   { grade_name: "B", grade_point: 3.0, min_percent: 81 },
-  { grade_name: "C+", grade_point: 2.5, min_percent: 71 },
-  { grade_name: "C", grade_point: 2.0, min_percent: 60 },
-  { grade_name: "D+", grade_point: 1.5, min_percent: 55 },
+  { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
+  { grade_name: "C", grade_point: 2.0, min_percent: 70 },
+  { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
   { grade_name: "D", grade_point: 1.0, min_percent: 50 },
   { grade_name: "F", grade_point: 0.0, min_percent: 0 },
 ];
@@ -663,6 +663,7 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
 
     const subjectGroups = Object.values(groupsMap).map((grp: any) => {
       grp.isSingle = grp.subjects.length === 1;
+      grp.groupCode = (grp.groupCode || grp.group_name || grp.groupName || "").trim();
       if (grp.isSingle) {
         grp.groupName = `${grp.subjects[0].name} ${grp.credit} นก.`;
       } else {
