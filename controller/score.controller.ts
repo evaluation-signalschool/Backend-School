@@ -9,9 +9,9 @@ const GRADING_CRITERIA = [
   { grade_name: "A", grade_point: 4.0, min_percent: 91 },
   { grade_name: "B+", grade_point: 3.5, min_percent: 86 },
   { grade_name: "B", grade_point: 3.0, min_percent: 81 },
-  { grade_name: "C+", grade_point: 2.5, min_percent: 76 },
-  { grade_name: "C", grade_point: 2.0, min_percent: 70 },
-  { grade_name: "D+", grade_point: 1.5, min_percent: 60 },
+  { grade_name: "C+", grade_point: 2.5, min_percent: 71 },
+  { grade_name: "C", grade_point: 2.0, min_percent: 60 },
+  { grade_name: "D+", grade_point: 1.5, min_percent: 55 },
   { grade_name: "D", grade_point: 1.0, min_percent: 50 },
   { grade_name: "F", grade_point: 0.0, min_percent: 0 },
 ];
@@ -19,32 +19,32 @@ const GRADING_CRITERIA = [
 // ลำดับรายวิชามาตรฐานตามโครงสร้างหลักสูตร (Canonical Subject Order)
 export const CANONICAL_SUBJECT_ORDER: { [name: string]: number } = {
   // M01
-  "การส่งกำลังและซ่อมบำรุงสายสื่อสาร": 1,
-  "การจัดหน่วยทหารสื่อสาร": 2,
+  การส่งกำลังและซ่อมบำรุงสายสื่อสาร: 1,
+  การจัดหน่วยทหารสื่อสาร: 2,
   // M02
-  "วงจรไฟฟ้า": 3,
+  วงจรไฟฟ้า: 3,
   // M03
-  "การสื่อสารทางยุทธวิธี": 4,
+  การสื่อสารทางยุทธวิธี: 4,
   // M04
-  "การสื่อสารประเภทวิทยุและการสงครามอิเล็กทรอนิกส์": 5,
+  การสื่อสารประเภทวิทยุและการสงครามอิเล็กทรอนิกส์: 5,
   // M05
-  "การสื่อสารประเภทสาย": 6,
+  การสื่อสารประเภทสาย: 6,
   // M06
-  "ภาษาอังกฤษทางทหาร": 7,
-  "การอำนวยการทางการสื่อสาร": 8,
+  ภาษาอังกฤษทางทหาร: 7,
+  การอำนวยการทางการสื่อสาร: 8,
   // M07
-  "การพัฒนาทักษะดิจิทัลที่จำเป็นระดับต้น": 9,
+  การพัฒนาทักษะดิจิทัลที่จำเป็นระดับต้น: 9,
   // MN01 / MN08
-  "การรักษาความปลอดภัย": 10,
-  "การป้องกันและปราบปรามการก่อความไม่สงบ": 11,
-  "ระเบียบงานสารบรรณ": 12,
+  การรักษาความปลอดภัย: 10,
+  การป้องกันและปราบปรามการก่อความไม่สงบ: 11,
+  ระเบียบงานสารบรรณ: 12,
   // MN02 / MN09
-  "แผนที่เข็มทิศ": 13,
+  แผนที่เข็มทิศ: 13,
   // S01 / S10
-  "ผู้นำหน่วย": 14,
-  "วิชาตามนโยบายที่กองทัพบกกำหนด": 15,
+  ผู้นำหน่วย: 14,
+  วิชาตามนโยบายที่กองทัพบกกำหนด: 15,
   // P01 / P11
-  "ฝึกทบทวนการใช้เครื่องมือสื่อสาร": 16,
+  ฝึกทบทวนการใช้เครื่องมือสื่อสาร: 16,
 };
 
 // ลำดับประเภทกลุ่มวิชา (M -> MN -> S -> P)
@@ -209,10 +209,10 @@ export const getStudentScores = async (
       WHERE sg.batch_id = ?
       GROUP BY sg.id;
     `;
-    const [groupSummaries]: any = await conn.execute<RowDataPacket[]>(summaryQuery, [
-      studentId,
-      batchId,
-    ]);
+    const [groupSummaries]: any = await conn.execute<RowDataPacket[]>(
+      summaryQuery,
+      [studentId, batchId],
+    );
 
     groupSummaries.sort((a: any, b: any) => {
       return compareGroupNames(a.group_name || "", b.group_name || "");
@@ -673,7 +673,10 @@ export const getscore = async (req: Request, res: Response): Promise<void> => {
 
     // เรียงกลุ่มวิชาตามลำดับที่แท้จริงของโครงสร้างหลักสูตร (M01..M07, MN08..MN09, S10, P11)
     subjectGroups.sort((a: any, b: any) => {
-      return compareGroupNames(a.groupCode || a.groupName, b.groupCode || b.groupName);
+      return compareGroupNames(
+        a.groupCode || a.groupName,
+        b.groupCode || b.groupName,
+      );
     });
 
     // เรียงวิชาภายในแต่ละกลุ่ม และสร้าง masterSubjects ที่เรียงตามลำดับวิชาที่แท้จริง
@@ -856,10 +859,10 @@ export const saveBatchScores = async (
 
     // ตรวจสอบว่าเป็นการอัปเดตเปอร์เซ็นต์เวลา หรือคะแนนความประพฤติ
     const isUpdatingTimeScores = scores.some(
-      (s: any) => "training_time_score" in s || "exam_time_score" in s
+      (s: any) => "training_time_score" in s || "exam_time_score" in s,
     );
     const isUpdatingBehaviorScores = scores.some(
-      (s: any) => "behavior_score" in s
+      (s: any) => "behavior_score" in s,
     );
 
     // ตรวจสอบความถูกต้องของเปอร์เซ็นต์เวลา (ห้ามค่าว่าง, ห้ามเกิน 100%, ห้ามติดลบ)
@@ -1571,7 +1574,9 @@ export const getBatchRanking = async (
           studentCount: cluster.length,
           color: palette,
           isTop3Group: true,
-          isResolved: !cluster.filter((m: any) => m.manualRank <= 3).some((m: any) => m.isTrulyTied),
+          isResolved: !cluster
+            .filter((m: any) => m.manualRank <= 3)
+            .some((m: any) => m.isTrulyTied),
           minRank: minR,
           maxRank: maxR,
           studentCodes: cluster.map((s: any) => s.student_code).join(", "),
@@ -1607,19 +1612,19 @@ export const getBatchRanking = async (
         incomplete_students: incompleteStudents.length,
         total_subjects: masterSubjects.length,
         selected_subjects_count: selectedSubSet.size,
-        tiedCount: finalStudentList.filter((s: any) => s.manualRank <= 3 && s.isTiedGpa && s.is_completed).length,
+        tiedCount: finalStudentList.filter(
+          (s: any) => s.manualRank <= 3 && s.isTiedGpa && s.is_completed,
+        ).length,
         unresolvedTies: top3UnresolvedCount,
       },
     });
   } catch (error) {
     console.error("Error calculating batch ranking:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ",
-        error: (error as any)?.message,
-      });
+    res.status(500).json({
+      success: false,
+      message: "เกิดข้อผิดพลาดในการคำนวณการจัดลำดับ",
+      error: (error as any)?.message,
+    });
   }
 };
 
