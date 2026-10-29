@@ -1750,10 +1750,13 @@ export const getUnitSelectionRanking = async (
     });
 
     const subjectGroups = Object.values(groupsMap).map((grp: any) => {
-      const maxScore = Number(grp.group_max_score || 0);
-      const credit = Number(grp.credit || 0);
-      const maxWeighted = maxScore * credit;
       const isMerged = grp.subjects.length > 1;
+      const subjectsCount = grp.subjects.length || 1;
+      const sumMaxScore = Number(grp.group_max_score || 0);
+      // ถ้าเป็นกลุ่มวิชาที่เมิร์จหลายวิชา ให้หาค่าเฉลี่ยของคะแนนเต็ม
+      const avgMaxScore = isMerged ? sumMaxScore / subjectsCount : sumMaxScore;
+      const credit = Number(grp.credit || 0);
+      const maxWeighted = avgMaxScore * credit;
       const subjectNames = grp.subjects.map((s: any) => s.name).join(" + ");
       const fullName = isMerged
         ? `${grp.groupName} ${subjectNames}`
@@ -1761,15 +1764,19 @@ export const getUnitSelectionRanking = async (
 
       return {
         ...grp,
-        group_max_score: maxScore,
-        group_max_score_formatted: maxScore.toFixed(4),
+        subjectsCount: subjectsCount,
+        sum_max_score: sumMaxScore,
+        sum_max_score_formatted: sumMaxScore.toFixed(4),
+        group_max_score: avgMaxScore,
+        group_max_score_formatted: avgMaxScore.toFixed(4),
+        avg_max_score: avgMaxScore,
+        avg_max_score_formatted: avgMaxScore.toFixed(4),
         group_max_weighted: maxWeighted,
         group_max_weighted_formatted: maxWeighted.toFixed(4),
         isMerged: isMerged,
         subjectNames: subjectNames,
         fullName: fullName,
         displayName: `${fullName} (${credit} นก.)`,
-        subjectsCount: grp.subjects.length,
       };
     });
 
@@ -1799,15 +1806,35 @@ export const getUnitSelectionRanking = async (
       maxBehaviorScore = 100;
     }
 
-    // คำนวณคะแนนตามสูตร 80/20
+    // คำนวณคะแนนตามสูตร 80/20 (วิชาที่ใช้กลุ่มด้วยกัน หาค่าเฉลี่ยของคะแนนดิบ แล้วคูณหน่วยกิต)
     const processedStudents = allStudentsList.map((st: any) => {
       let totalWeightedScore = 0;
       const groupScores: Record<number, any> = {};
 
       subjectGroups.forEach((grp: any) => {
-        const rawScore = Number(st.group_raw_scores[grp.groupId]) || 0;
+        const isMerged = grp.isMerged;
+        const subjectsCount = grp.subjectsCount || 1;
+        const subjectScores: Record<number, any> = {};
+        let sumRawScore = 0;
+
+        grp.subjects.forEach((sub: any) => {
+          const sScore = Number(st.subject_raw_scores[sub.id]) || 0;
+          subjectScores[sub.id] = {
+            id: sub.id,
+            name: sub.name,
+            raw_score: sScore,
+            raw_score_formatted: sScore.toFixed(4),
+            max_score: Number(sub.max_score) || 0,
+            max_score_formatted: (Number(sub.max_score) || 0).toFixed(4),
+          };
+          sumRawScore += sScore;
+        });
+
+        // หาค่าเฉลี่ยของคะแนนดิบในกลุ่มวิชา
+        const avgRawScore = isMerged ? sumRawScore / subjectsCount : sumRawScore;
         const credit = grp.credit;
-        const weightedScore = rawScore * credit;
+        // ค่าน้ำหนัก = ค่าเฉลี่ย * หน่วยกิต
+        const weightedScore = avgRawScore * credit;
         const maxScore = Number(grp.group_max_score) || 0;
         const maxWeightedScore =
           Number(grp.group_max_weighted) || maxScore * credit;
@@ -1819,16 +1846,23 @@ export const getUnitSelectionRanking = async (
         groupScores[grp.groupId] = {
           groupId: grp.groupId,
           groupName: grp.groupName,
-          max_score: maxScore,
-          max_score_formatted: maxScore.toFixed(4),
-          raw_score: rawScore,
-          raw_score_formatted: rawScore.toFixed(4),
+          isMerged: isMerged,
+          subjectsCount: subjectsCount,
+          sum_raw_score: sumRawScore,
+          sum_raw_score_formatted: sumRawScore.toFixed(4),
+          raw_score: avgRawScore,
+          raw_score_formatted: avgRawScore.toFixed(4),
+          avg_raw_score: avgRawScore,
+          avg_raw_score_formatted: avgRawScore.toFixed(4),
           credit: credit,
           credit_formatted: Number(credit).toFixed(2),
           weighted_score: weightedScore,
           weighted_score_formatted: weightedScore.toFixed(4),
+          max_score: maxScore,
+          max_score_formatted: maxScore.toFixed(4),
           max_weighted_score: maxWeightedScore,
           max_weighted_score_formatted: maxWeightedScore.toFixed(4),
+          subject_scores: subjectScores,
         };
       });
 
@@ -1851,6 +1885,7 @@ export const getUnitSelectionRanking = async (
         last_name: st.last_name,
         full_name: st.full_name,
         affiliation: st.affiliation,
+        subject_raw_scores: st.subject_raw_scores,
         group_scores: groupScores,
         total_weighted_score: totalWeightedScore,
         total_weighted_score_formatted: totalWeightedScore.toFixed(4),
